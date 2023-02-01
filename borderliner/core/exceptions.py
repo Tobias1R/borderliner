@@ -1,0 +1,2 @@
+class PipelineConfigException(Exception):
+    pass
