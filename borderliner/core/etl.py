@@ -12,7 +12,7 @@ class EtlPipeline(Pipeline):
         
 
     def transform(self,*args,**kwargs):
-        print('transform data in ETL class')
+        print('A middleware function is required to transform data in ETL class')
     
     def load_to_target(self,*args,**kwargs):
         self.logger.info('Loading data')

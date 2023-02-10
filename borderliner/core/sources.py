@@ -5,6 +5,7 @@ import sys
 from borderliner.db.conn_abstract import DatabaseBackend
 from borderliner.db.postgres_lib import PostgresBackend
 from borderliner.db.redshift_lib import RedshiftBackend
+
 # logging
 logging.basicConfig(
     stream=sys.stdout, 
@@ -88,6 +89,8 @@ class PipelineSourceDatabase(PipelineSource):
         self.host = self.config['host']
         self.port = self.config['port']
         match str(self.config['type']).upper():
+            # TODO: dynamically import
+            # i'll leave these dbs as native support.
             case 'POSTGRES':
                 self.backend = PostgresBackend(
                     host=self.host,
@@ -97,6 +100,14 @@ class PipelineSourceDatabase(PipelineSource):
                     port=self.port
                 )
             case 'REDSHIFT':
+                self.backend = RedshiftBackend(
+                    host=self.host,
+                    database=self.config['database'],
+                    user=self.user,
+                    password=self.password,
+                    port=self.port
+                )
+            case 'IBMDB2':
                 self.backend = RedshiftBackend(
                     host=self.host,
                     database=self.config['database'],
@@ -200,9 +211,98 @@ class PipelineSourceDatabase(PipelineSource):
 
 
 
-
+import requests
 class PipelineSourceApi(PipelineSource):
-    pass
+    def __init__(self, config: dict, *args, **kwargs) -> None:
+        super().__init__(config, *args, **kwargs)
+        # TODO: Make sure they exists 
+        self.auth_type = config['api'].get('auth', {}).get('type', None)
+        self.client_id = config['api'].get('auth', {}).get('client_id', None)
+        self.client_secret = config['api'].get('auth', {}).get('client_secret', None)
+        self.access_token_url = config['api'].get('auth', {}).get('access_token_url', None)
+        self.bearer = config['api'].get('auth', {}).get('bearer', None)
+        self.auth_headers_extra = config['api'].get('auth', {}).get('auth_headers_extra', None)
+
+        # request
+        self.request_headers = config.get('api', {}).get('request', {}).get('headers')
+        self.request_method = config.get('api', {}).get('request', {}).get('method')
+        self.request_url = config.get('api', {}).get('request', {}).get('url')
+        self.request_data = config.get('api', {}).get('request', {}).get('data')
+        self.request_read_json_params = config.get('api', {}).get('request', {}).get('read_json_params')
+
+    def get_access_token(self):
+        if not self.access_token:
+            data = {
+                'grant_type': 'client_credentials',
+                'client_id': self.client_id,
+                'client_secret': self.client_secret
+            }
+            for key,value in self.auth_headers_extra:
+                data[key] = value
+            response = requests.post(self.access_token_url, data=data)
+            response.raise_for_status()
+            self.access_token = response.json()['access_token']
+        return self.access_token
+
+    def make_request_oauth2(self, url, method='GET', data=None, headers=None):
+        headers = headers or {}        
+        for key,value in self.request_headers.items():
+            headers[key] = value
+        if not 'Authorization' in headers:
+            headers['Authorization'] = f'{self.bearer} {self.get_access_token()}'
+        response = requests.request(method, url, headers=headers, data=data)
+        response.raise_for_status()
+        return response.json()
+
+    def make_request_apikey(self, url, method='GET', data=None, headers=None):
+        self.logger.info(f'requesting {url}')
+        headers = headers or {}     
+        if self.auth_headers_extra is not None:   
+            for key,value in self.auth_headers_extra.items():
+                headers[key] = value
+        match str(self.auth_type).upper():
+            case 'OAUTH2':
+                if not 'Authorization' in headers:
+                    headers['Authorization'] = f'{self.bearer} {self.get_access_token()}'
+            # case 'APIKEY':
+        if self.request_headers is not None:
+            for key,value in self.request_headers.items():
+                headers[key] = value
+        response = requests.request(method, url, headers=headers, data=data)
+        response.raise_for_status()
+        return response.json()
+
+    def make_request(self, url, method='GET', data=None, headers=None):
+        self.logger.info(f'requesting {url}')
+        headers = headers or {}     
+        if self.auth_headers_extra is not None:   
+            for key,value in self.auth_headers_extra.items():
+                headers[key] = value
+        match str(self.auth_type).upper():
+            case 'OAUTH2':
+                if not 'Authorization' in headers:
+                    headers['Authorization'] = f'{self.bearer} {self.get_access_token()}'
+            # case 'APIKEY':
+        if self.request_headers is not None:
+            for key,value in self.request_headers.items():
+                headers[key] = value
+        response = requests.request(method, url, headers=headers, data=data)
+        response.raise_for_status()
+        return response.json()
+
+    def extract(self, *args, **kwargs):
+        data_api = self.make_request(
+                    url=self.request_url,
+                    method=self.request_method,
+                    data=self.request_data,            
+                )
+                
+        # list or object?
+        df = pandas.read_json(
+            data_api,
+            **self.request_read_json_params,
+            )
+        self._data = df
 
 class PipelineSourceFlatFile(PipelineSource):
     pass

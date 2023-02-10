@@ -114,9 +114,30 @@ class PipelineConfig:
 class Pipeline:
     def __init__(self,config:PipelineConfig|str,*args,**kwargs) -> None:
         """
+        The init method initializes the attributes of a Pipeline object.
+
+        The method first creates a runtime attribute to store the current 
+            datetime and a pid attribute to store a unique string identifier 
+            for the pipeline.
+        The logger attribute is initialized to store the logger object.
+        The env attribute is initialized as None, which is an instance of 
+            the CloudEnvironment class.
+        The name and pipeline_type attributes are both initialized with 
+            default strings.
+        The config attribute is initialized as None, which is an instance 
+            of the PipelineConfig class.
+        The method then checks if the argument passed as config is a string 
+            or an instance of the PipelineConfig class and sets the value of 
+                config accordingly.
+        The source and target attributes are both initialized as None and will 
+            store instances of the PipelineSource and PipelineTarget classes, 
+                respectively.
+        The method then calls the _configure_pipeline method and passes kwargs 
+            to it.
+
         kwargs
-            no_source: True for manual specification of source
-            no_target: True for manual specification of target
+        no_source: True for manual specification of source
+        no_target: True for manual specification of target
         """
         self.runtime = datetime.now()
         self.pid = str(time.strftime("%Y%m%d%H%M%S")) + str(os.getpid())
@@ -163,6 +184,25 @@ class Pipeline:
                 self.env = AwsEnvironment(config)
     
     def make_source(self,src=None):
+        """
+            Makes a data source based on the given `src` argument or 
+            the default source defined in `config.source`.
+
+            The function supports three types of data sources:
+            - 'DATABASE': A database source is created using the `PipelineSourceDatabase` class.
+            - 'FILE': A flat file source is created using the `PipelineSourceFlatFile` class.
+            - 'API': An API source is created using the `PipelineSourceApi` class.
+
+            Parameters:
+            src (dict, optional): A dictionary containing the source 
+                configuration. If `None`, the default source
+                defined in `config.source` will be used.
+
+            Raises:
+            ValueError: If the data source type specified in `src` 
+                is not supported.
+
+        """
         if src == None:
             src = self.config.source
 
@@ -184,6 +224,20 @@ class Pipeline:
         raise ValueError('Unknown data source')
 
     def make_target(self,tgt=None):
+        """
+            This method creates an instance of the data source for the pipeline.
+
+            The source of the data can be a database, flat file, or API. The source 
+            type is determined by the src parameter. If src is not provided, the
+            source is taken from the pipeline configuration.
+
+            If the source type is a dictionary, the method uses a match statement 
+            to determine the correct source type, and creates an instance of the 
+            appropriate class, either PipelineSourceDatabase, PipelineSourceFlatFile,
+            or PipelineSourceApi.
+
+            If the source type is unknown, a ValueError is raised.
+        """
         if tgt == None:
             tgt = self.config.target
 
@@ -238,4 +292,8 @@ class Pipeline:
         raise Exception('Query not found.')
     
     def transform(self,*args,**kwargs):
-        print('transform data in ETL class')
+        print('''
+            Function transform in ETL class has no effect on data.
+            If wan't to transform your data you need to assign 
+            a middleware function to perform this operation!
+            ''')
