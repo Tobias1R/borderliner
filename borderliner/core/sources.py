@@ -287,7 +287,8 @@ class PipelineSourceApi(PipelineSource):
             for key,value in self.request_headers.items():
                 headers[key] = value
         response = requests.request(method, url, headers=headers, data=data)
-        response.raise_for_status()
+        if self.config.get('raise_for_status',False):
+            response.raise_for_status()
         return response.json()
 
     def extract(self, *args, **kwargs):
