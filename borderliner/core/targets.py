@@ -1,4 +1,5 @@
 
+import os
 import pandas
 import logging
 import sys
@@ -6,6 +7,7 @@ import sys
 from borderliner.db.conn_abstract import DatabaseBackend
 from borderliner.db.postgres_lib import PostgresBackend
 from borderliner.db.redshift_lib import RedshiftBackend
+from borderliner.db.ibm_db2_lib import IbmDB2Backend
 # logging
 logging.basicConfig(
     stream=sys.stdout, 
@@ -52,8 +54,21 @@ class PipelineTarget:
         self.primary_key = ()
 
         self.configure()
+
+    def replace_env_vars(self,data):
+        for key, value in data.items():
+            if isinstance(value, dict):
+                self.replace_env_vars(value)
+            elif isinstance(value, str) and value.startswith("$ENV_"):
+                env_var = value[5:]
+                if env_var in os.environ:
+                    data[key] = os.environ[env_var]
+                else:
+                    raise ValueError(f"Environment variable {env_var} not found")
+        return data
     
     def configure(self):
+        self.config = self.replace_env_vars(self.config)
         self.user = self.config['username']
         self.password = self.config['password']
         self.host = self.config['host']
@@ -76,6 +91,14 @@ class PipelineTarget:
                     port=self.port,
                     staging_schema=self.config.get('staging_schema','staging'),
                     staging_table=self.config.get('staging_table',None)
+                )
+            case 'IBMDB2':
+                self.backend = IbmDB2Backend(
+                    host=self.host,
+                    database=self.config['database'],
+                    user=self.user,
+                    password=self.password,
+                    port=self.port
                 )
         
         self.engine = self.backend.get_engine()

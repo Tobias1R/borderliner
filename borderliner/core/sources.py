@@ -1,10 +1,11 @@
+import io
+import os
 import pandas
 import logging
 import sys
 
 from borderliner.db.conn_abstract import DatabaseBackend
-from borderliner.db.postgres_lib import PostgresBackend
-from borderliner.db.redshift_lib import RedshiftBackend
+from borderliner.cloud import CloudEnvironment
 
 # logging
 logging.basicConfig(
@@ -92,6 +93,7 @@ class PipelineSourceDatabase(PipelineSource):
             # TODO: dynamically import
             # i'll leave these dbs as native support.
             case 'POSTGRES':
+                from borderliner.db.postgres_lib import PostgresBackend
                 self.backend = PostgresBackend(
                     host=self.host,
                     database=self.config['database'],
@@ -100,6 +102,7 @@ class PipelineSourceDatabase(PipelineSource):
                     port=self.port
                 )
             case 'REDSHIFT':
+                from borderliner.db.redshift_lib import RedshiftBackend
                 self.backend = RedshiftBackend(
                     host=self.host,
                     database=self.config['database'],
@@ -108,7 +111,8 @@ class PipelineSourceDatabase(PipelineSource):
                     port=self.port
                 )
             case 'IBMDB2':
-                self.backend = RedshiftBackend(
+                from borderliner.db.ibm_db2_lib import IbmDB2Backend
+                self.backend = IbmDB2Backend(
                     host=self.host,
                     database=self.config['database'],
                     user=self.user,
@@ -306,4 +310,72 @@ class PipelineSourceApi(PipelineSource):
         self._data = df
 
 class PipelineSourceFlatFile(PipelineSource):
-    pass
+    def __init__(self, config: dict, enviroment:CloudEnvironment, *args, **kwargs) -> None:
+        super().__init__(config, *args, **kwargs)
+        self.env = enviroment
+
+    def generate_file_path(self) -> str:
+        """
+        Generate file path based on instructions in config dictionary
+        """
+        
+        # kinda stuck in here!!!
+        self.env.download_flat_files(self.config)
+
+        # Get the file name and extension
+        file_name = self.config.get('file_name', 'data')
+        file_ext = self.config.get('file_ext', 'csv')
+
+        # Concatenate the base directory, file name, and extension to get the full file path
+        file_path = os.path.join(f'{file_name}.{file_ext}')
+
+        return file_path
+
+    def extract(self):
+        # Check if the file path is defined in the config
+        file_paths = self.config.get('file_path', None)
+        if file_paths is None:
+            self.env.download_flat_files(self.config)
+            if self.config.get('storage',{}).get('download_files',False):
+                file_paths = os.listdir('borderliner_downloads')
+            else:
+                file_paths = self.env.data_buffers
+        
+
+        # Read the file(s) into a pandas DataFrame or list of DataFrames
+        if isinstance(file_paths, str):
+            if file_paths.endswith('.csv'):
+                read_csv_params = self.config.get('read_csv_params', {})
+                self._data = pandas.read_csv(file_paths, **read_csv_params)
+            elif file_paths.endswith('.xlsx'):
+                read_excel_params = self.config.get('read_excel_params', {})
+                self._data = pandas.read_excel(file_paths, **read_excel_params)
+            else:
+                raise ValueError('File type not supported')
+        elif isinstance(file_paths, list):
+            self._data = []
+            for file_path in file_paths:
+                if isinstance(file_path, io.BytesIO):
+                    file_path.seek(0) # reset the stream to the beginning
+                    if self.config.get('extension','csv').upper() == 'CSV':
+                        read_csv_params = self.config.get('read_csv_params', {})
+                        df = pandas.read_csv(file_path, **read_csv_params)
+                    elif self.config.get('extension','csv').upper() == 'XLSX':
+                        read_excel_params = self.config.get('read_excel_params', {})
+                        df = pandas.read_excel(file_path, **read_excel_params)
+                    else:
+                        raise ValueError('File type not supported')
+                    self._data.append(df)
+                elif isinstance(file_path,str):
+                    if file_path.endswith('.csv'):
+                        read_csv_params = self.config.get('read_csv_params', {})
+                        df = pandas.read_csv(file_path, **read_csv_params)
+                    elif file_path.endswith('.xlsx'):
+                        read_excel_params = self.config.get('read_excel_params', {})
+                        df = pandas.read_excel(file_path, **read_excel_params)
+                    else:
+                        raise ValueError('File type not supported')
+                    self._data.append(df)
+        else:
+            raise ValueError('Invalid file path(s) in config')
+

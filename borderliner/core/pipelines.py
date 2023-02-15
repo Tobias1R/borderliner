@@ -167,6 +167,7 @@ class Pipeline:
         self.logger.info(f'{str(self.__class__)} loaded.')
 
     def _configure_pipeline(self,*args,**kwargs):
+        self._configure_environment(self.config['cloud'])
         
         if not kwargs.get('no_source',None):
             self.make_source()
@@ -174,7 +175,7 @@ class Pipeline:
         if not kwargs.get('no_target',None):
             self.make_target()
         
-        self._configure_environment(self.config['cloud'])
+        
 
     def _configure_environment(self,config:dict):
         service = config.get('service',None)
@@ -216,7 +217,9 @@ class Pipeline:
                     )
                     return
                 case 'FILE':
-                    self.source = PipelineSourceFlatFile(src)
+                    self.source = PipelineSourceFlatFile(src,
+                        enviroment=self.env,
+                        pipeline_pid=self.pid)
                     return
                 case 'API':
                     self.source = PipelineSourceApi(src)
@@ -294,6 +297,6 @@ class Pipeline:
     def transform(self,*args,**kwargs):
         print('''
             Function transform in ETL class has no effect on data.
-            If wan't to transform your data you need to assign 
+            If you wan't to transform your data you need to assign 
             a middleware function to perform this operation!
             ''')

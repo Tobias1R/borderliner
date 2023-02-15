@@ -3,8 +3,37 @@ import sys
 import os
 import logging
 import json
+from typing import List
 import yaml
+import paramiko
+from ftplib import FTP
 
+def list_ftp_directory(ftp: FTP, path: str = "") -> List[str]:
+    """
+    List contents of a directory in FTP.
+
+    Args:
+        ftp: An active FTP connection.
+        path: The path of the directory to list.
+
+    Returns:
+        A list of strings representing the contents of the directory.
+    """
+    if path:
+        ftp.cwd(path)
+    return ftp.nlst()
+    
+def list_files_sftp(host, port, username, password, remote_dir):
+    """
+    Lists the files in the specified remote SFTP directory.
+    """
+    transport = paramiko.Transport((host, port))
+    transport.connect(username=username, password=password)
+    sftp = paramiko.SFTPClient.from_transport(transport)
+    files = sftp.listdir(remote_dir)
+    sftp.close()
+    transport.close()
+    return files
 
 # logging
 logging.basicConfig(
@@ -22,6 +51,7 @@ class CloudEnvironment:
         self.loaded_libs = {}
         self.show_info = True
         self.pipeline_db = None
+        self.data_buffers = []
         if isinstance(source,str):
             self._load_from_file(source)
         elif isinstance(source,dict):
@@ -89,4 +119,43 @@ class CloudEnvironment:
         print(self.connections)
     
     def upload_file_to_storage(self,file_name, storage_root, object_name,*args, **kwargs):
+        pass
+    
+    def list_directory(self, directory_path,**kwargs):
+        """
+        Returns a list of objects in the specified directory.
+        """
+        if self.service == 'S3':
+            bucket = self.storage.get('bucket')
+            objects = self.connections['s3'].list_objects_v2(Bucket=bucket, Prefix=directory_path,**kwargs)['Contents']
+            return [obj['Key'] for obj in objects]
+        elif self.service == 'GCP':
+            bucket = self.storage.get('bucket')
+            blobs = self.connections['client'].list_blobs(bucket_or_name=bucket, prefix=directory_path,**kwargs)
+            return [blob.name for blob in blobs]
+        elif self.service == 'AZURE':
+            container_client = self.connections.get('container_client')
+            blob_list = container_client.list_blobs(name_starts_with=directory_path,**kwargs)
+            return [blob.name for blob in blob_list]
+        elif self.service == 'CLOUD':
+            # implementation for simple storage here
+            ftp = FTP(
+                self.connections['host'],
+                #self.connections['port'],
+                self.connections['user'],
+                self.connections['password']
+            )
+            return list_ftp_directory(ftp,directory_path)
+        elif self.service == 'CLOUDSFTP':
+            return list_files_sftp(
+                self.connections['host'],
+                self.connections['port'],
+                self.connections['user'],
+                self.connections['password'],
+                directory_path
+            )
+        else:
+            raise ValueError("Invalid cloud service specified.")
+    
+    def download_flat_files(self,source_config):
         pass
