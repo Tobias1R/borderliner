@@ -9,23 +9,39 @@ from sqlalchemy import Table
 from sqlalchemy.sql import text
 from psycopg2 import Timestamp
 from sqlalchemy import MetaData
-
+import pyodbc
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
+import ibm_db
+import logging
+logging.basicConfig()
+logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 class IbmDB2Backend(conn_abstract.DatabaseBackend):
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
         self.interface_name = 'DB2'
-        self.alchemy_engine_flag = 'iaccess+pyodbc'
+        self.alchemy_engine_flag = 'db2+ibm_db'
         self.expected_connection_args = [
                 'host',
                 'user',
                 'password'
             ]
-        self.database = 'dummy?DBQ=DEFAULT_SCHEMA'
+        #self.database = 'dummy?DBQ=DEFAULT_SCHEMA'
         self.meta = MetaData(bind=self.engine)
+        self.database_module = ibm_db
+        self.driver_signature = '{IBM i Access ODBC Driver 64-bit}'
+        self.ssl_mode = False
 
     
     def get_connection(self, *args, **kwargs):
+        kwargs['ssl'] = False
         return self.get_engine(*args, **kwargs)
+    
+    def get_engine(self,*args,**kwargs)->Engine:
+        if isinstance(self.engine,Engine):
+            return self.engine
+        self.engine = create_engine(self.uri)
+        return self.engine
     
     def insert_on_conflict(
         self, 
@@ -62,8 +78,15 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
         None
         """
         # Create the target table object
-        target_table = Table(table_name, self.meta, schema=schema, autoload=True, autoload_with=active_connection)
-        
+        # target_table = Table(
+        #     table_name, 
+        #     self.meta, 
+        #     schema=schema, 
+        #     autoload=True, 
+        #     autoload_with=active_connection,
+        #     ibm_db_ssl=False
+        # )
+
         # Determine the insert behavior based on the if_exists argument
         if if_exists == 'fail':
             insert_behavior = None
@@ -71,31 +94,94 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
             insert_behavior = 'replace'
         else:
             insert_behavior = 'append'
-        
+
         # Determine the conflict handling behavior based on the conflict_action argument
         if conflict_action == 'ignore':
-            conflict_behavior = 'DO NOTHING'
+            conflict_behavior = ''
         elif conflict_action == 'update':
             if conflict_key is None:
                 raise ValueError("conflict_key must be specified when using 'update' conflict action")
             conflict_cols = conflict_key if isinstance(conflict_key, (list, tuple)) else (conflict_key,)
             update_cols = [col for col in df.columns if col not in conflict_cols]
-            update_clause = ', '.join([f"{col}=EXCLUDED.{col}" for col in update_cols])
-            conflict_behavior = f"DO UPDATE SET {update_clause}"
+            update_clause = ', '.join([f"{col}=src.{col}" for col in update_cols])
+            conflict_behavior = f"WHEN MATCHED THEN UPDATE SET {update_clause}"
+
+            key_cols = conflict_key
+            if isinstance(conflict_key,list):
+                key_cols = ', '.join([col for col in conflict_key])
         else:
             conflict_behavior = ''
-        
-        # Generate the SQL statement and execute it
-        sql = target_table.insert().values(df.to_dict('records')).\
-              on_conflict_do_nothing(index_elements=conflict_key)
-        if conflict_behavior:
-            sql = text(f"{sql.compile(compile_kwargs={'literal_binds': True})} {conflict_behavior}")
-        result = active_connection.execute(sql)
-        
-        # Count the number of inserted and updated rows
-        inserted_rows = result.rowcount
-        updated_rows = result.context.result.rowcount if conflict_action == 'update' else 0
-        
+
+        inserted_rows = 0
+        updated_rows = 0
+        max_rows = 1000
+        num_rows = len(df)
+        chunk_size = max_rows
+        connection = active_connection.raw_connection()
+        cursor = connection.cursor()
+        if len(df) > max_rows:
+            for i in range(0, num_rows, chunk_size):
+                chunk = df.iloc[i:i+chunk_size]
+                # Generate the SQL statement and execute it
+                merge_statement = f"""MERGE INTO {schema}.{table_name} AS tgt
+                        USING (VALUES {', '.join([str(tuple(x)) for x in chunk.values])}
+                            )
+                            AS src ({', '.join(chunk.columns)})
+                        ON {' AND '.join([f'tgt.{col}=src.{col}' for col in conflict_cols])}
+                        {conflict_behavior}
+                        WHEN NOT MATCHED THEN INSERT ({', '.join(chunk.columns)})
+                            VALUES ({', '.join(['src.'+col for col in chunk.columns])});"""
+                cursor.execute(
+                            merge_statement, 
+                            df.to_dict("records"))
+                inserted_rows += cursor.rowcount
+                updated_rows += len(chunk)-cursor.rowcount
+        else:
+            merge_statement = f"""MERGE INTO {schema}.{table_name} AS tgt
+                        USING (VALUES {', '.join([str(tuple(x)) for x in df.values])}
+                            )
+                            AS src ({', '.join(df.columns)})
+                        ON {' AND '.join([f'tgt.{col}=src.{col}' for col in conflict_cols])}
+                        {conflict_behavior}
+                        WHEN NOT MATCHED THEN INSERT ({', '.join(df.columns)})
+                            VALUES ({', '.join(['src.'+col for col in df.columns])});"""
+            cursor.execute(
+                        merge_statement, 
+                        df.to_dict("records"))
+            inserted_rows = cursor.rowcount
+            updated_rows = len(df)-cursor.rowcount
+        # for index, row in df.iterrows():
+            
+        #     merge_statement = f"""MERGE INTO {schema}.{table_name} AS tgt
+        #             USING (VALUES {tuple(row.values)}
+        #                 )
+        #                 AS src ({', '.join(df.columns)})
+        #             ON {' AND '.join([f'tgt.{col}=src.{col}' for col in conflict_cols])}
+        #             {conflict_behavior}
+        #             WHEN NOT MATCHED THEN INSERT ({', '.join(df.columns)})
+        #                 VALUES ({', '.join(['src.'+col for col in df.columns])});"""
+        #     cursor.execute(
+        #             merge_statement, 
+        #             row.to_dict())
+            
+        #     if isinstance(conflict_key,(list,tuple)):
+        #         values = ', '.join(["'"+str(v)+"'" for v in row[conflict_key].values])
+        #     else:
+        #         values = row[conflict_key].values
+        #     # Count the number of inserted and updated rows
+        #     if self.val_record_exists(cursor,
+        #         f'{schema}.{table_name}',
+        #         key_cols,
+        #         values
+        #         ):
+        #         updated_rows += cursor.rowcount*-1
+        #     else:
+        #         inserted_rows += cursor.rowcount
+             #result.context.result.rowcount if conflict_action == 'update' else 0
+        #print(result.context.result)
+        cursor.execute('COMMIT;')
+        cursor.close()
+        connection.close()
         self.execution_metrics['inserted_rows'] = inserted_rows
         self.execution_metrics['updated_rows'] = updated_rows
         

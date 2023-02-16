@@ -20,6 +20,7 @@ class PostgresBackend(conn_abstract.DatabaseBackend):
                 'password',
                 'port'
             ]
+        self.ssl_mode = 'prefer'
         
 
     @staticmethod

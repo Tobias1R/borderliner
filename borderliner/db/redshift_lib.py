@@ -101,6 +101,7 @@ class RedshiftBackend(conn_abstract.DatabaseBackend):
             cursor = connection.cursor()
             self.execution_metrics['processed_rows'] += len(df)
             truncate_staging_statement = f'TRUNCATE TABLE {self.staging_schema}.{self.staging_table};'
+            self.logger.info(f'Truncating {self.staging_schema}.{self.staging_table}')
             cursor.execute(truncate_staging_statement)
             join_key = ''
             update_where_clause = ''
@@ -137,6 +138,8 @@ class RedshiftBackend(conn_abstract.DatabaseBackend):
             # save data in staging table
             INSERT_SQL = f"""INSERT INTO {self.staging_schema}.{self.staging_table} ({col_names})
                                         VALUES %s """
+            total_bulk = len(data)
+            self.logger.info(f'Bulk insert {total_bulk} records')
             execute_values(
                     cursor, 
                     INSERT_SQL, 
@@ -155,6 +158,7 @@ class RedshiftBackend(conn_abstract.DatabaseBackend):
                     WHERE {update_where_clause2}
 
                 """
+                self.logger.info('Performing updates.')
                 cursor.execute(UPDATE_SQL)
                 
                 self.execution_metrics['updated_rows'] += cursor.rowcount
@@ -167,7 +171,7 @@ class RedshiftBackend(conn_abstract.DatabaseBackend):
             """
 
             #print(BULK_INSERT_SQL)
-
+            self.logger.info('Moving data from staging to ods.')
             cursor.execute(BULK_INSERT_SQL)
             self.execution_metrics['inserted_rows'] += cursor.rowcount
             connection.commit()                                

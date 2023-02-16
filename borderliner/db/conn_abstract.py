@@ -1,7 +1,7 @@
 from typing import Any
 from sqlalchemy.engine import Engine
 import psycopg2
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, MetaData
 import os
 import warnings
 
@@ -80,7 +80,8 @@ class DatabaseBackend:
         self._parse_connection_args(kwargs)
         self.count = 0
         self.total_time = 0.0
-
+        self.ssl_mode = 'prefer'
+        self.logger = logger
         self.session = None
         self.engine = None
         self.execution_metrics = {
@@ -90,6 +91,18 @@ class DatabaseBackend:
             'processed_rows':0,
             }
         #self.set_engine()
+
+    def inspect_table(self,table_name:str):
+        # Create a SQLAlchemy metadata object to represent the schema of the database
+        metadata = MetaData(bind=self.engine)
+
+        # Use the metadata object to reflect the database schema and retrieve the table object
+        table = metadata.tables[self.table_name]
+        columns = []
+        # Print the column names and data types of the table
+        for column in table.columns:
+            columns.append((column.name, column.type))
+        return columns
 
     def __str__(self) -> str:
         return str(f'Interface Connection [{self.interface_name}]')
@@ -155,7 +168,7 @@ class DatabaseBackend:
     def get_engine(self,*args,**kwargs)->Engine:
         if isinstance(self.engine,Engine):
             return self.engine
-        self.engine = create_engine(self.uri,connect_args={'sslmode': 'prefer'},*args,**kwargs)
+        self.engine = create_engine(self.uri,connect_args={'sslmode': self.ssl_mode},*args,**kwargs)
         self.session = sessionmaker(bind=self.engine)()
         setup_session_tracking(self.session)
         return self.engine
@@ -186,7 +199,9 @@ class DatabaseBackend:
     
     def val_record_exists(self,p_cur, p_tab, p_pk_cols, p_pks):
         """checks if the record already exists in the target table / member."""
-        p_cur.execute("select  count(1)  FROM "+p_tab+"  where (" + p_pk_cols + ") =  (" + p_pks + ")")
+        statement = f'SELECT COUNT(1) FROM {p_tab} WHERE ({p_pk_cols}) = ({p_pks})'
+        #print(statement)
+        p_cur.execute(statement)
         
         query_result = p_cur.fetchone()
         query_result = query_result[0]

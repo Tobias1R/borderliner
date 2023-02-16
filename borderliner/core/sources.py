@@ -69,7 +69,7 @@ class PipelineSourceDatabase(PipelineSource):
         self.host:str = ''
         self.port:str = None
         self.queries = {}
-        
+        self.table = ''
         self.count = 0
         self.total_time = 0.0
 
@@ -83,6 +83,9 @@ class PipelineSourceDatabase(PipelineSource):
         self.primary_key = ()
 
         self.configure()
+    
+    def inspect_table(self):
+        return self.backend.inspect_table(self.table)
     
     def configure(self):
         self.user = self.config['username']
