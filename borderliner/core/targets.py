@@ -105,7 +105,7 @@ class PipelineTarget:
         self.connection = self.backend.get_connection()
     
     def __str__(self) -> str:
-        return str(self.config)
+        return str(self.config['type']).upper()
     
     def load(self,data:pandas.DataFrame|list):
         if self.dump_data_csv:
@@ -128,6 +128,9 @@ class PipelineTargetDatabase(PipelineTarget):
 
     def save_data(self):
         if isinstance(self._data,pandas.DataFrame):
+            insmethod = self.config.get('insertion_method','UPSERT')
+            total_rows = len(self._data)
+            self.logger.info(f'Insertion Method: {insmethod} for {total_rows} rows')
             self.backend.insert_on_conflict(
                 self.engine,
                 self._data,
@@ -139,6 +142,9 @@ class PipelineTargetDatabase(PipelineTarget):
             )
         if isinstance(self._data,list):
             for df in self._data:
+                insmethod = self.config.get('insertion_method','UPSERT')
+                total_rows = len(df)
+                self.logger.info(f'Insertion Method: {insmethod} for {total_rows} rows')
                 self.backend.insert_on_conflict(
                     self.engine,
                     df,

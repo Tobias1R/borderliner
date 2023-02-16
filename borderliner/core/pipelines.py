@@ -4,7 +4,11 @@ import os
 import sys
 import time
 from typing import Union, TextIO
+import pandas
 import yaml
+import hashlib
+
+
 from .exceptions import PipelineConfigException
 from .sources import (
     PipelineSource,
@@ -25,6 +29,15 @@ PIPELINE_TYPE_PROCESS = 'PROCESS_PIPELINE'
 PIPELINE_TYPE_EXTRACT = 'EXTRACT_PIPELINE'
 PIPELINE_TYPE_ETL = 'ETL_PIPELINE'
 
+def gen_md5(df:pandas.DataFrame,ignore=[])->pandas.Series:
+    """Generate data md5"""
+    df = df.assign(concat=str(''))    
+    for col in df:
+        if col not in ignore:
+            df['concat'] += df[col].astype(str)
+    df['md5'] = df['concat'].apply(lambda x: hashlib.md5(x.encode()).hexdigest())
+    df = df.drop('concat', axis=1)
+    return df['md5']
 
 # logging
 logging.basicConfig(
@@ -33,6 +46,32 @@ logging.basicConfig(
     format='[%(asctime)s] %(levelname)s - %(message)s'
     )
 logger = logging.getLogger()
+
+class PhaseTracker:
+    def __init__(self) -> None:
+        self.start_time = time.time()
+        self.phase_counter = 0
+        self.phase_names = []
+        self.default_phase_name = 'PHASE'
+        #self.phase('Phase tracker initiated.')
+    
+    def println(self):
+        '''Log block separation'''
+        size = 65
+        print('-'.join('-' for x in range(size)))
+    
+    def phase(self,message:str):
+        self.println()
+        print(f'[{str(self.phase_counter).upper().zfill(2)}]: {message.upper()}')
+        self.println()
+        self.phase_counter += 1
+    
+    def finish(self,name='PIPELINE',pid=0):
+        self.println()
+        runtime = round(float(time.time() - self.start_time),2)
+        msg = f"[{pid}]{name} runtime: {runtime} seconds"
+        print(msg)
+        self.println()
 
 class PipelineConfig:
     
@@ -57,8 +96,8 @@ class PipelineConfig:
         self.target = {}
         self.csv_filename_prefix = ''
         self.dump_data_csv = False
-        
-
+        self.generate_control_columns = False
+        self.ignore_md5_fields = []
         self.md5_ignore_fields = []
         # cloud env
         self.storage = {}
@@ -139,11 +178,15 @@ class Pipeline:
         no_source: True for manual specification of source
         no_target: True for manual specification of target
         """
+        self.tracker = PhaseTracker()
         self.runtime = datetime.now()
         self.pid = str(time.strftime("%Y%m%d%H%M%S")) + str(os.getpid())
         self.logger = logging.getLogger()
-        self.logger.info('Initializing...')
+        self.tracker.phase('Initializing...')
+        
         self.env:CloudEnvironment = None
+
+        self.kwargs = kwargs
 
         self.name:str = 'PIPELINE_NAME'
         self.pipeline_type:str = PIPELINE_TYPE_PROCESS
@@ -164,20 +207,38 @@ class Pipeline:
         
         self._configure_pipeline(kwargs)
 
-        self.logger.info(f'{str(self.__class__)} loaded.')
+        self.logger.info(f'{self.config.pipeline_name} loaded.')
+    
+        
+    
 
     def _configure_pipeline(self,*args,**kwargs):
         self._configure_environment(self.config['cloud'])
         
-        if not kwargs.get('no_source',None):
+        if self.kwargs.get('no_source',False):
+            self.logger.info('no source for this run')
+        else:
+            self.logger.info('creating source...')
             self.make_source()
 
-        if not kwargs.get('no_target',None):
+        if self.kwargs.get('no_target',False):
+            self.logger.info('no target for this run')
+        else:
+            self.logger.info('creating target...')
             self.make_target()
         
         
 
-    def _configure_environment(self,config:dict):
+    def _configure_environment(self,cnf:dict|str):
+        config = {}
+        if isinstance(cnf,dict):
+            config = cnf
+        elif isinstance(cnf,str):
+            try:
+                config = yaml.safe_load(open(cnf,'r'))
+                self.logger.info(f'Cloud config file: {cnf}')
+            except Exception as e:
+                raise ValueError(f'Invalid cloud config file: {cnf}')
         service = config.get('service',None)
         match str(service).upper():
             case 'AWS':
@@ -269,11 +330,22 @@ class Pipeline:
         pass
 
     def after_run(self,*args,**kwargs):
+        self.tracker.phase('Metrics')
         self.print_metrics()
+        self.tracker.finish(pid=self.pid,name=self.config.pipeline_name)
+
+    def finish(self,name='PIPELINE',pid=0):
+        runtime = round(float(time.time() - self.runtime),2)
+        msg = f"[{pid}]{name} runtime: {runtime} seconds"
+        print(msg)
+        print('-'.join(['-' for x in range(0,70)]))
 
     def print_metrics(self):
-        for metric, value in self.target.metrics.items():
-            self.logger.info(f"{metric.capitalize()}: {value}")
+        if self.kwargs.get('no_target',False):
+            pass
+        else:
+            for metric, value in self.target.metrics.items():
+                self.logger.info(f"{metric.capitalize()}: {value}")
 
 
     def get_query(self,query:str='extract'):
@@ -295,7 +367,7 @@ class Pipeline:
         raise Exception('Query not found.')
     
     def transform(self,*args,**kwargs):
-        print('''
+        self.logger.warning('''
             Function transform in ETL class has no effect on data.
             If you wan't to transform your data you need to assign 
             a middleware function to perform this operation!

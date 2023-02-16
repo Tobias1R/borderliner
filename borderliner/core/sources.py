@@ -33,7 +33,7 @@ class PipelineSource:
         pass
 
     def __str__(self) -> str:
-        return str(self.config)
+        return str(self.config['type']).upper()
 
     @property
     def data(self):

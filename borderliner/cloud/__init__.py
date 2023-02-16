@@ -47,6 +47,7 @@ class CloudEnvironment:
     def __init__(self,source,*args,**kwargs) -> None:
         self.service = 'CLOUD'
         self.storage = {}
+        self.storage_paths = {}
         self.connections = {}
         self.loaded_libs = {}
         self.show_info = True
