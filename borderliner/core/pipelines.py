@@ -332,12 +332,14 @@ class Pipeline:
                         csv_chunks_files=self.source.csv_chunks_files)
                     if self.config.create_target_tables:
                         if self.source is not None:
-                            source_schema = self.source.inspect_source()
-                            print(source_schema)
+                            source_schema = self.source.inspect_source()                            
+                            self.target.source_schema = source_schema
                         table_name = tgt.get('table')
                         schema = tgt.get('schema')
                         if not self.target.backend.table_exists(table_name,schema):
                             self.logger.info(f'The table {schema}.{table_name} will be created.')
+                            self.target.backend.create_table = True
+                            self.target.create_table(source_schema)
                         else:
                             self.logger.info(f'The table {schema}.{table_name} exists.')
                     return

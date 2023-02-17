@@ -91,6 +91,7 @@ class DatabaseBackend:
             'processed_rows':0,
             }
         #self.set_engine()
+        self.create_table = False
 
     def inspect_table(self,schema:str,table_name:str):
         source_metadata = MetaData()
@@ -103,7 +104,9 @@ class DatabaseBackend:
         cols = source_table_reflected.columns
         cons = source_table_reflected.constraints
 
-        return (cols,cons)
+        return source_table_reflected #(cols,cons,self.engine.dialect)
+    
+    
 
     def __str__(self) -> str:
         return str(f'Interface Connection [{self.interface_name}]')

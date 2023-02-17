@@ -3,6 +3,8 @@ import os
 import pandas
 import logging
 import sys
+from sqlalchemy import MetaData, Table, Column, String
+from sqlalchemy import PrimaryKeyConstraint
 
 from borderliner.db.conn_abstract import DatabaseBackend
 from borderliner.db.postgres_lib import PostgresBackend
@@ -52,6 +54,8 @@ class PipelineTarget:
         self.iteration_list = []
         self.deltas = {}
         self.primary_key = ()
+
+        self.source_schema = []
 
         self.configure()
 
@@ -126,8 +130,42 @@ class PipelineTarget:
 class PipelineTargetDatabase(PipelineTarget):
     def __init__(self, config: dict,*args,**kwargs) -> None:
         super().__init__(config,*args,**kwargs)
+    
+    def create_table(self,source_schema:Table):
+        self.logger.info('Creating table from source schema.')
+        target_schema = self.config.get('schema')
+        target_table = self.config.get('table')
+        source_schema.name = target_table
+         # Create a new table with the same structure
+        target_metadata = MetaData(schema=target_schema)
+        columns_dict = {} #[col.copy() for col in source_schema.columns]
+        pk_cols = [col.name for col in source_schema.primary_key]
+        for colname, col_cnf in self.config.get('target_table_definition',{}).items():
+            print(colname)
+            for col in source_schema.columns:                
+                #col: Column = None
+                if col.name == colname:                    
+                    col = Column(col.name, String(255))
+                    size = col_cnf.get('size',False)
+                    if size:
+                        col = Column(col.name, String(size))
+                if col.name not in columns_dict.keys():
+                    columns_dict[col.name] = col
+        columns = list(columns_dict.values())
+        print(columns)
+        table_args = [PrimaryKeyConstraint(*pk_cols).create()]
+        target_table_object = Table(
+            target_table, target_metadata, *columns, *table_args
+        )
 
+        # Create the table in the target database
+        with self.engine.begin() as conn:
+            target_table_object.create(conn)
+        print(source_schema)
+
+        
     def save_data(self):
+        
         if isinstance(self._data,pandas.DataFrame):
             insmethod = self.config.get('insertion_method','UPSERT')
             total_rows = len(self._data)

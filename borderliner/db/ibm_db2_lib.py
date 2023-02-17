@@ -103,14 +103,15 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
         None
         """
         # Create the target table object
-        target_table = Table(
-            table_name, 
-            self.meta, 
-            schema=schema, 
-            autoload=True, 
-            autoload_with=active_connection,
-            ibm_db_ssl=False
-        )
+        if self.create_table:
+            target_table = Table(
+                table_name, 
+                self.meta, 
+                schema=schema, 
+                autoload=True, 
+                autoload_with=active_connection,
+                ibm_db_ssl=False
+            )
 
         # Determine the insert behavior based on the if_exists argument
         if if_exists == 'fail':
