@@ -7,7 +7,7 @@ import warnings
 import pandas
 from sqlalchemy.sql import text
 from psycopg2 import Timestamp
-
+import psycopg2
 class PostgresBackend(conn_abstract.DatabaseBackend):
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
@@ -47,6 +47,23 @@ class PostgresBackend(conn_abstract.DatabaseBackend):
             col_type = "string"
 
         return _SQL_TYPES[col_type]
+    
+    def table_exists(self,table_name:str,schema:str):
+        try:
+            conn = self.engine.raw_connection()
+            cur = conn.cursor()
+            query = f"SELECT table_name FROM information_schema.tables WHERE table_name = '{table_name}' AND table_schema = '{schema}'"
+            cur.execute(query)
+            exists = cur.fetchone()[0]
+            cur.close()
+            conn.close()
+            return exists
+        except psycopg2.Error as e:
+            return False
+        #In this code, you first establish a connection to the PostgreSQL database using the psycopg2 library. Then, you execute a SQL query to check if the specified table
+
+
+
 
     #@staticmethod
     def column_exists_db(

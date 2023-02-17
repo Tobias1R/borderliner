@@ -7,6 +7,7 @@ import warnings
 import pandas
 from sqlalchemy.sql import text
 from psycopg2 import Timestamp
+import psycopg2
 
 class RedshiftBackend(conn_abstract.DatabaseBackend):
     def __init__(self,*args,**kwargs):
@@ -48,6 +49,19 @@ class RedshiftBackend(conn_abstract.DatabaseBackend):
             col_type = "string"
 
         return _SQL_TYPES[col_type]
+    
+    def table_exists(self,table_name, schema):
+        try:
+            conn = self.engine.raw_connection()
+            query = f"SELECT table_name FROM information_schema.tables WHERE table_name = '{table_name}' AND table_schema = '{schema}'"
+            cur = conn.cursor()
+            cur.execute(query)
+            exists = cur.fetchone() is not None
+            conn.close()
+            return exists
+        except psycopg2.Error as e:
+            print(f"Error checking table existence: {e}")
+            return False
 
     #@staticmethod
     def column_exists_db(

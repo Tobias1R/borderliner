@@ -14,8 +14,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 import ibm_db
 import logging
-logging.basicConfig()
-logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
+# logging.basicConfig()
+# logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 class IbmDB2Backend(conn_abstract.DatabaseBackend):
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
@@ -31,7 +31,32 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
         self.database_module = ibm_db
         self.driver_signature = '{IBM i Access ODBC Driver 64-bit}'
         self.ssl_mode = False
+    
+    def table_exists(self,table_name:str,schema:str):
+        try:
+            conn = self.engine.raw_connection()
+            cursor = conn.cursor()
+            query = f"SELECT TABNAME FROM SYSCAT.TABLES WHERE TABNAME = '{table_name}' AND TABSCHEMA = '{schema}'"
+            cursor.execute(query)
+            exists = cursor.fetchone()['TABNAME'] == table_name.upper()
+            cursor.close()
+            conn.close()
+            return exists
+        except Exception as e:
+            return False
 
+    def inspect_table(self,schema:str,table_name:str):
+        data = []
+        query = f"SELECT NAME, COLTYPE, LENGTH, SCALE FROM SYSIBM.SYSCOLUMNS WHERE TBNAME = '{table_name.upper()}'"
+        conn = self.get_connection().raw_connection()
+        cursor = conn.cursor()
+        cursor.execute(query)
+        result = cursor.fetchall()
+        for row in result:
+            data.append(row) #(row['NAME'], row['COLTYPE'], row['LENGTH'], row['SCALE']))            
+        cursor.close()
+        conn.close()
+        return data
     
     def get_connection(self, *args, **kwargs):
         kwargs['ssl'] = False
@@ -78,14 +103,14 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
         None
         """
         # Create the target table object
-        # target_table = Table(
-        #     table_name, 
-        #     self.meta, 
-        #     schema=schema, 
-        #     autoload=True, 
-        #     autoload_with=active_connection,
-        #     ibm_db_ssl=False
-        # )
+        target_table = Table(
+            table_name, 
+            self.meta, 
+            schema=schema, 
+            autoload=True, 
+            autoload_with=active_connection,
+            ibm_db_ssl=False
+        )
 
         # Determine the insert behavior based on the if_exists argument
         if if_exists == 'fail':
@@ -119,6 +144,8 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
         chunk_size = max_rows
         connection = active_connection.raw_connection()
         cursor = connection.cursor()
+        total_rows_table_before = self.count_records(cursor,f'{schema}.{table_name}')
+        self.logger.info(f'ROWS IN TARGET: {total_rows_table_before}')
         if len(df) > max_rows:
             for i in range(0, num_rows, chunk_size):
                 chunk = df.iloc[i:i+chunk_size]
@@ -135,7 +162,7 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
                             merge_statement, 
                             df.to_dict("records"))
                 inserted_rows += cursor.rowcount
-                updated_rows += len(chunk)-cursor.rowcount
+                #updated_rows += len(chunk)-cursor.rowcount
         else:
             merge_statement = f"""MERGE INTO {schema}.{table_name} AS tgt
                         USING (VALUES {', '.join([str(tuple(x)) for x in df.values])}
@@ -149,7 +176,7 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
                         merge_statement, 
                         df.to_dict("records"))
             inserted_rows = cursor.rowcount
-            updated_rows = len(df)-cursor.rowcount
+            #updated_rows = len(df)-cursor.rowcount
         # for index, row in df.iterrows():
             
         #     merge_statement = f"""MERGE INTO {schema}.{table_name} AS tgt
@@ -180,10 +207,14 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
              #result.context.result.rowcount if conflict_action == 'update' else 0
         #print(result.context.result)
         cursor.execute('COMMIT;')
+        total_rows_table_after = self.count_records(cursor,f'{schema}.{table_name}')
         cursor.close()
         connection.close()
-        self.execution_metrics['inserted_rows'] = inserted_rows
-        self.execution_metrics['updated_rows'] = updated_rows
+        inserted_rows_temp = total_rows_table_before - total_rows_table_after
+        self.execution_metrics['inserted_rows'] += inserted_rows_temp
+        if inserted_rows_temp == 0:
+            updated_rows = inserted_rows
+        self.execution_metrics['updated_rows'] += updated_rows
         
 
 Connection = IbmDB2Backend

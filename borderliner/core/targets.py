@@ -109,6 +109,7 @@ class PipelineTarget:
     
     def load(self,data:pandas.DataFrame|list):
         if self.dump_data_csv:
+            self.csv_chunks_files = list(set(self.csv_chunks_files))
             for filename in self.csv_chunks_files:
                 self.logger.info(f'reading csv {filename}')
                 df = pandas.read_csv(filename)

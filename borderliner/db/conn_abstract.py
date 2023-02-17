@@ -1,7 +1,7 @@
 from typing import Any
 from sqlalchemy.engine import Engine
 import psycopg2
-from sqlalchemy import create_engine, MetaData
+from sqlalchemy import create_engine, MetaData, Table
 import os
 import warnings
 
@@ -92,17 +92,18 @@ class DatabaseBackend:
             }
         #self.set_engine()
 
-    def inspect_table(self,table_name:str):
-        # Create a SQLAlchemy metadata object to represent the schema of the database
-        metadata = MetaData(bind=self.engine)
+    def inspect_table(self,schema:str,table_name:str):
+        source_metadata = MetaData()
+        source_table_reflected = Table(
+            table_name, 
+            source_metadata, 
+            schema=schema, 
+            autoload=True, 
+            autoload_with=self.engine)
+        cols = source_table_reflected.columns
+        cons = source_table_reflected.constraints
 
-        # Use the metadata object to reflect the database schema and retrieve the table object
-        table = metadata.tables[self.table_name]
-        columns = []
-        # Print the column names and data types of the table
-        for column in table.columns:
-            columns.append((column.name, column.type))
-        return columns
+        return (cols,cons)
 
     def __str__(self) -> str:
         return str(f'Interface Connection [{self.interface_name}]')
@@ -197,6 +198,16 @@ class DatabaseBackend:
         """
         logger.critical(f'your database lib does not implement insert_on_conflict method')
     
+    def count_records(self,cursor,table):
+        statement = f'SELECT COUNT(1) FROM {table};'
+        #print(statement)
+        cursor.execute(statement)
+        
+        query_result = cursor.fetchone()
+        query_result = query_result[0]
+
+        return query_result
+
     def val_record_exists(self,p_cur, p_tab, p_pk_cols, p_pks):
         """checks if the record already exists in the target table / member."""
         statement = f'SELECT COUNT(1) FROM {p_tab} WHERE ({p_pk_cols}) = ({p_pks})'

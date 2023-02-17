@@ -26,7 +26,7 @@ class AwsEnvironment(CloudEnvironment):
         :param object_name: S3 object name. If not specified then file_name is used
         :return: True if file was uploaded, else False
         """
-        logger.info('Uploading file to bucket.')
+        logger.info(f'Uploading file to bucket: s3://{bucket}/{file_name}')
         # If S3 object_name was not specified, use file_name
         if object_name is None:
             object_name = os.path.basename(file_name)

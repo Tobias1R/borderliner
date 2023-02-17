@@ -72,6 +72,7 @@ class PhaseTracker:
         msg = f"[{pid}]{name} runtime: {runtime} seconds"
         print(msg)
         self.println()
+        print('DONE!')
 
 class PipelineConfig:
     
@@ -99,6 +100,7 @@ class PipelineConfig:
         self.generate_control_columns = False
         self.ignore_md5_fields = []
         self.md5_ignore_fields = []
+        self.create_target_tables = False
         # cloud env
         self.storage = {}
         # clear dump files after action
@@ -210,7 +212,15 @@ class Pipeline:
         self.logger.info(f'{self.config.pipeline_name} loaded.')
     
         
-    
+    def _clean_csv_chunk_files(self):
+        #self.csv_chunks_files = [file for file in self.csv_chunks_files if not file.endswith('.csv')]
+        self.logger.info('removing temp files')
+        #Alternatively, you can use the following code to remove CSV files using os.remove():
+        self.source.csv_chunks_files = list(set(self.source.csv_chunks_files))
+        for file in self.source.csv_chunks_files:
+            if file.endswith('.csv'):
+                os.remove(file)
+        # self.csv_chunks_files = [file for file in self.csv_chunks_files if not file.endswith('.csv')]
 
     def _configure_pipeline(self,*args,**kwargs):
         self._configure_environment(self.config['cloud'])
@@ -274,16 +284,19 @@ class Pipeline:
                     self.source = PipelineSourceDatabase(
                         src,
                         dump_data_csv=self.config.dump_data_csv,
-                        pipeline_pid=self.pid
+                        pipeline_pid=self.pid,
+                        pipeline_name=self.config.pipeline_name
                     )
                     return
                 case 'FILE':
                     self.source = PipelineSourceFlatFile(src,
                         enviroment=self.env,
-                        pipeline_pid=self.pid)
+                        pipeline_pid=self.pid,
+                        pipeline_name=self.config.pipeline_name)
                     return
                 case 'API':
-                    self.source = PipelineSourceApi(src)
+                    self.source = PipelineSourceApi(src,
+                        pipeline_name=self.config.pipeline_name)
                     return
         raise ValueError('Unknown data source')
 
@@ -305,6 +318,10 @@ class Pipeline:
         if tgt == None:
             tgt = self.config.target
 
+        
+        else:
+            self.logger.info('All right, i won\'t create tables.')
+
         if isinstance(tgt,dict):
             match str(tgt['target_type']).upper():
                 case 'DATABASE':
@@ -313,6 +330,16 @@ class Pipeline:
                         dump_data_csv=self.config.dump_data_csv,
                         pipeline_pid=self.pid,
                         csv_chunks_files=self.source.csv_chunks_files)
+                    if self.config.create_target_tables:
+                        if self.source is not None:
+                            source_schema = self.source.inspect_source()
+                            print(source_schema)
+                        table_name = tgt.get('table')
+                        schema = tgt.get('schema')
+                        if not self.target.backend.table_exists(table_name,schema):
+                            self.logger.info(f'The table {schema}.{table_name} will be created.')
+                        else:
+                            self.logger.info(f'The table {schema}.{table_name} exists.')
                     return
                 case 'FILE':
                     self.target = PipelineTargetFlatFile(tgt)
@@ -323,16 +350,23 @@ class Pipeline:
         raise ValueError('Unknown data target')
 
     def find_entry_point(self,*args,**kwargs):
-        self.run()
-        self.after_run()
+        self.before_run(args,kwargs)
+        self.run(args,kwargs)
+        self.after_run(args,kwargs)
 
     def run(self,*args,**kwargs):
+        pass
+
+    def before_run(self,*args,**kwargs):
         pass
 
     def after_run(self,*args,**kwargs):
         self.tracker.phase('Metrics')
         self.print_metrics()
+        if self.config.dump_data_csv:
+            self._clean_csv_chunk_files()
         self.tracker.finish(pid=self.pid,name=self.config.pipeline_name)
+        
 
     def finish(self,name='PIPELINE',pid=0):
         runtime = round(float(time.time() - self.runtime),2)

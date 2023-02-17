@@ -23,14 +23,21 @@ class PipelineSource:
         self.logger = logger
         self.config = config
         self._data:pandas.DataFrame|list = None
-        self.chunk_size = -1
+        self.chunk_size = config.get('chunk_size',-1)
         self.metrics:dict = {
             'total_rows':0,
             'processed_rows':0
         }
+        self.pipeline_name:str = self.kwargs.get('pipeline_name',False)
+        if not self.pipeline_name:
+            self.pipeline_name = str(self.pipeline_pid)
+            self.logger.warning('Pipeline source did not received the pipeline_name, using pid.')
+        self.pipeline_name = self.pipeline_name.replace(' ','_')
+        
     
     def extract(self):
-        pass
+        extracted_rows = self.metrics['total_rows']
+        self.logger.info(f'Extracted {extracted_rows} rows')
 
     def __str__(self) -> str:
         return str(self.config['type']).upper()
@@ -38,7 +45,9 @@ class PipelineSource:
     @property
     def data(self):
         source_empty = True
-        if isinstance(self._data,list):
+        if isinstance(self._data, type(iter([]))):
+            source_empty = False
+        elif isinstance(self._data,list):
             if len(self._data) > 0:
                 source_empty = False
         elif isinstance(self._data,pandas.DataFrame):
@@ -53,6 +62,9 @@ class PipelineSource:
         self.extract()
         
         return self._data
+    
+    def inspect_source(self):
+        self.logger.info("Inspecting data source")
     
     
 
@@ -69,23 +81,26 @@ class PipelineSourceDatabase(PipelineSource):
         self.host:str = ''
         self.port:str = None
         self.queries = {}
-        self.table = ''
+        self.table = config.get('table','')
         self.count = 0
         self.total_time = 0.0
-
+        self.schema = config.get('schema','')
         self.engine = None
         self.connection = None
 
-        
+        self.kwargs = kwargs
 
+        
         self.iteration_list = []
         self.deltas = {}
         self.primary_key = ()
 
         self.configure()
     
-    def inspect_table(self):
-        return self.backend.inspect_table(self.table)
+    def inspect_source(self):
+        super().inspect_source()
+        table_name = f'{self.table}'
+        return self.backend.inspect_table(self.schema,table_name)
     
     def configure(self):
         self.user = self.config['username']
@@ -134,6 +149,7 @@ class PipelineSourceDatabase(PipelineSource):
             self.queries['iterate'],
             self.engine
         )
+
         
         total_cols = int(df.shape[1])
         self._data = []
@@ -149,7 +165,7 @@ class PipelineSourceDatabase(PipelineSource):
             )
             data = pandas.read_sql_query(query,self.engine)
             if self.kwargs.get('dump_data_csv',False):
-                filename = f'slice_{str(slice_index).zfill(5)}_{self.pipeline_pid}.csv'                
+                filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.csv'                
                 data.to_csv(
                     filename,
                     header=True,
@@ -168,16 +184,19 @@ class PipelineSourceDatabase(PipelineSource):
     def extract(self):
         if 'iterate' in self.queries:
             self.extract_by_iteration()
+            super().extract()
             return
         if self.chunk_size > 0: 
             data = pandas.read_sql_query(
                 self.get_query('extract'),
                 self.engine,
                 chunksize=self.chunk_size)
+            
             slice_index = 1
-            for df in data:
-                if self.kwargs.get('dump_data_csv',False):
-                    filename = f'slice_{str(slice_index).zfill(5)}_{self.pipeline_pid}.csv'                
+            if self.kwargs.get('dump_data_csv',False):
+                for df in data:
+                    print(df)
+                    filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.csv'                
                     df.to_csv(
                         filename,
                         header=True,
@@ -185,24 +204,26 @@ class PipelineSourceDatabase(PipelineSource):
                     )
                     self.csv_chunks_files.append(filename)
                     slice_index += 1
+                    self.metrics['total_rows'] += len(df)
             self._data = data
         else:
             data = pandas.read_sql_query(
                 self.get_query('extract'),
                 self.engine)
             if self.kwargs.get('dump_data_csv',False):
-                filename = f'slice_FULL_{self.pipeline_pid}.csv'                
+                filename = f'{self.pipeline_name}_slice_FULL.csv'                
                 data.to_csv(
                     filename,
                     header=True,
                     index=False
                 )
                 self.csv_chunks_files.append(filename)
+                self.metrics['total_rows'] += len(data)
             self._data = data
-            
+        return super().extract()    
 
     def get_query(self,query:str='extract'):
-        print(self.queries)
+        #print(self.queries)
         if query in self.queries:
             key_params = str(query)+'_params'
             if key_params in self.queries:
