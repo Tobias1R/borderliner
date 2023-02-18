@@ -47,6 +47,16 @@ logging.basicConfig(
     )
 logger = logging.getLogger()
 
+
+def set_control_columns(df:pandas.DataFrame,ignore_md5_fields:list=[])->pandas.DataFrame:
+    print('WELL, HERE I AM')
+    df['data_md5'] = gen_md5(
+                    df,
+                    ignore=ignore_md5_fields
+                )
+    df['extract_date'] = str(time.strftime("%Y%m%d%H%M%S"))
+    return df
+
 class PhaseTracker:
     def __init__(self) -> None:
         self.start_time = time.time()
@@ -211,6 +221,7 @@ class Pipeline:
 
         self.logger.info(f'{self.config.pipeline_name} loaded.')
     
+    
         
     def _clean_csv_chunk_files(self):
         #self.csv_chunks_files = [file for file in self.csv_chunks_files if not file.endswith('.csv')]
@@ -285,18 +296,21 @@ class Pipeline:
                         src,
                         dump_data_csv=self.config.dump_data_csv,
                         pipeline_pid=self.pid,
-                        pipeline_name=self.config.pipeline_name
+                        pipeline_name=self.config.pipeline_name,
+                        control_columns_function=set_control_columns
                     )
                     return
                 case 'FILE':
                     self.source = PipelineSourceFlatFile(src,
                         enviroment=self.env,
                         pipeline_pid=self.pid,
-                        pipeline_name=self.config.pipeline_name)
+                        pipeline_name=self.config.pipeline_name,
+                        control_columns_function=set_control_columns)
                     return
                 case 'API':
                     self.source = PipelineSourceApi(src,
-                        pipeline_name=self.config.pipeline_name)
+                        pipeline_name=self.config.pipeline_name,
+                        control_columns_function=set_control_columns)
                     return
         raise ValueError('Unknown data source')
 
@@ -329,7 +343,8 @@ class Pipeline:
                         tgt,
                         dump_data_csv=self.config.dump_data_csv,
                         pipeline_pid=self.pid,
-                        csv_chunks_files=self.source.csv_chunks_files)
+                        csv_chunks_files=self.source.csv_chunks_files,
+                        control_columns=self.config.generate_control_columns)
                     if self.config.create_target_tables:
                         if self.source is not None:
                             source_schema = self.source.inspect_source()                            

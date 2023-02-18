@@ -14,8 +14,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 import ibm_db
 import logging
-# logging.basicConfig()
-# logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
+logging.basicConfig()
+logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 class IbmDB2Backend(conn_abstract.DatabaseBackend):
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
@@ -33,16 +33,23 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
         self.ssl_mode = False
     
     def table_exists(self,table_name:str,schema:str):
+        
         try:
             conn = self.engine.raw_connection()
             cursor = conn.cursor()
             query = f"SELECT TABNAME FROM SYSCAT.TABLES WHERE TABNAME = '{table_name}' AND TABSCHEMA = '{schema}'"
             cursor.execute(query)
-            exists = cursor.fetchone()['TABNAME'] == table_name.upper()
+            exists = cursor.fetchone()
+            if table_name in exists:
+                cursor.close()
+                conn.close()
+                return True
+            print('EXISTS:', exists)
             cursor.close()
             conn.close()
             return exists
         except Exception as e:
+            self.logger.error(e)
             return False
 
     def inspect_table(self,schema:str,table_name:str):
@@ -102,6 +109,7 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
         --------
         None
         """
+        df.fillna(value=0, inplace=True)
         # Create the target table object
         if self.create_table:
             target_table = Table(
@@ -147,6 +155,15 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
         cursor = connection.cursor()
         total_rows_table_before = self.count_records(cursor,f'{schema}.{table_name}')
         self.logger.info(f'ROWS IN TARGET: {total_rows_table_before}')
+
+        def convert_double_precision_to_float(df):
+            for col in df.columns:
+                if df[col].dtype == 'float64':  # skip columns that are already float64
+                    continue
+                if df[col].dtype == 'object' and 'double precision' in str(df[col].dtype).lower():  # check if column is DOUBLE_PRECISION
+                    df[col] = df[col].apply(lambda x: float(x))
+            return df
+
         if len(df) > max_rows:
             for i in range(0, num_rows, chunk_size):
                 chunk = df.iloc[i:i+chunk_size]
@@ -160,8 +177,8 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
                         WHEN NOT MATCHED THEN INSERT ({', '.join(chunk.columns)})
                             VALUES ({', '.join(['src.'+col for col in chunk.columns])});"""
                 cursor.execute(
-                            merge_statement, 
-                            df.to_dict("records"))
+                    merge_statement, 
+                    convert_double_precision_to_float(df).to_dict("records"))
                 inserted_rows += cursor.rowcount
                 #updated_rows += len(chunk)-cursor.rowcount
         else:
@@ -174,44 +191,15 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
                         WHEN NOT MATCHED THEN INSERT ({', '.join(df.columns)})
                             VALUES ({', '.join(['src.'+col for col in df.columns])});"""
             cursor.execute(
-                        merge_statement, 
-                        df.to_dict("records"))
+                merge_statement, 
+                convert_double_precision_to_float(df).to_dict("records"))
             inserted_rows = cursor.rowcount
-            #updated_rows = len(df)-cursor.rowcount
-        # for index, row in df.iterrows():
             
-        #     merge_statement = f"""MERGE INTO {schema}.{table_name} AS tgt
-        #             USING (VALUES {tuple(row.values)}
-        #                 )
-        #                 AS src ({', '.join(df.columns)})
-        #             ON {' AND '.join([f'tgt.{col}=src.{col}' for col in conflict_cols])}
-        #             {conflict_behavior}
-        #             WHEN NOT MATCHED THEN INSERT ({', '.join(df.columns)})
-        #                 VALUES ({', '.join(['src.'+col for col in df.columns])});"""
-        #     cursor.execute(
-        #             merge_statement, 
-        #             row.to_dict())
-            
-        #     if isinstance(conflict_key,(list,tuple)):
-        #         values = ', '.join(["'"+str(v)+"'" for v in row[conflict_key].values])
-        #     else:
-        #         values = row[conflict_key].values
-        #     # Count the number of inserted and updated rows
-        #     if self.val_record_exists(cursor,
-        #         f'{schema}.{table_name}',
-        #         key_cols,
-        #         values
-        #         ):
-        #         updated_rows += cursor.rowcount*-1
-        #     else:
-        #         inserted_rows += cursor.rowcount
-             #result.context.result.rowcount if conflict_action == 'update' else 0
-        #print(result.context.result)
         cursor.execute('COMMIT;')
         total_rows_table_after = self.count_records(cursor,f'{schema}.{table_name}')
         cursor.close()
         connection.close()
-        inserted_rows_temp = total_rows_table_before - total_rows_table_after
+        inserted_rows_temp =  total_rows_table_after - total_rows_table_before
         self.execution_metrics['inserted_rows'] += inserted_rows_temp
         if inserted_rows_temp == 0:
             updated_rows = inserted_rows

@@ -35,7 +35,7 @@ class EtlPipeline(Pipeline):
                     )
                 self.source._data['extract_date'] = str(time.strftime("%Y%m%d%H%M%S"))
                 
-            elif isinstance(self.source._data,list):
+            elif isinstance(self.source._data,list) or isinstance(self.source._data,type(iter([]))):
                 newlist = []
                 for df in self.source._data:
                     df['data_md5'] = gen_md5(

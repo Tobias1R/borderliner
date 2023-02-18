@@ -4,6 +4,7 @@ import psycopg2
 from sqlalchemy import create_engine, MetaData, Table
 import os
 import warnings
+import pandas
 
 import sys
 import inspect
@@ -12,7 +13,7 @@ import traceback
 
 from sqlalchemy import event
 from sqlalchemy.orm.session import sessionmaker
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, exc, text
 from sqlalchemy.engine import Engine
 
 # logging
@@ -267,6 +268,29 @@ class DatabaseBackend:
         
         p_cursor.execute(sql_ins, p_values)
         self.execution_metrics['inserted_rows'] += p_cursor.row_count
+
+    def bulk_insert(self, active_connection: Engine,
+                    data: pandas.DataFrame,
+                    schema: str,
+                    table_name: str):
+        table = f"{schema}.{table_name}"
+        columns = ", ".join(data.columns)
+        values = [dict(row) for _, row in data.iterrows()]
+        stmt = f"INSERT INTO {table} ({columns}) VALUES ({', '.join(':' + col for col in data.columns)})"
+        
+        try:
+            conn = active_connection.raw_connection()
+            cursor = conn.cursor()
+            print(stmt)
+            print(values)
+            cursor.executemany(stmt, values)
+            cursor.close()
+            conn.commit()
+        except exc.SQLAlchemyError as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
 
 
 @event.listens_for(Engine, 'before_cursor_execute')

@@ -3,13 +3,14 @@ import os
 import pandas
 import logging
 import sys
-from sqlalchemy import MetaData, Table, Column, String
+from sqlalchemy import MetaData, Table, Column, String, TIMESTAMP, BIGINT
 from sqlalchemy import PrimaryKeyConstraint
-
+from sqlalchemy import types
 from borderliner.db.conn_abstract import DatabaseBackend
 from borderliner.db.postgres_lib import PostgresBackend
 from borderliner.db.redshift_lib import RedshiftBackend
 from borderliner.db.ibm_db2_lib import IbmDB2Backend
+from borderliner.db.dbutils import get_column_type
 # logging
 logging.basicConfig(
     stream=sys.stdout, 
@@ -25,6 +26,7 @@ class PipelineTarget:
         self.pipeline_pid = self.kwargs.get('pipeline_pid',0)
         self.dump_data_csv = kwargs.get('dump_data_csv',False)
         self.csv_chunks_files = kwargs.get('csv_chunks_files',[])
+        self.control_columns = kwargs.get('control_columns',False)
         self.config = config
         self._data:pandas.DataFrame|list = []
         self.chunk_size = -1
@@ -131,43 +133,115 @@ class PipelineTargetDatabase(PipelineTarget):
     def __init__(self, config: dict,*args,**kwargs) -> None:
         super().__init__(config,*args,**kwargs)
     
-    def create_table(self,source_schema:Table):
+    # def create_table(self,source_schema:Table):
+    #     self.logger.info('Creating table from source schema.')
+    #     target_schema = self.config.get('schema')
+    #     target_table = self.config.get('table')
+    #     source_schema.name = target_table
+    #      # Create a new table with the same structure
+    #     target_metadata = MetaData(schema=target_schema)
+    #     columns_dict = {} #[col.copy() for col in source_schema.columns]
+    #     pk_cols = [col for col in source_schema.primary_key]
+    #     # for col in source_schema.primary_key:
+    #     #     if col.name in self.config.get('target_table_definition',{}).keys():
+    #     #         col_cnf = self.config.get('target_table_definition',{})[col.name]
+    #     #         size = col_cnf.get('size',False)
+    #     #         col = Column(col.name, String(255),primary_key=True)
+    #     #         if size:
+    #     #             col = Column(col.name, String(size),primary_key=True)
+    #     #     pk_cols.append(col)
+    #     for colname, col_cnf in self.config.get('target_table_definition',{}).items():
+    #         print(colname)
+                            
+    #         for col in source_schema.columns:                
+    #             #col: Column = None
+    #             if col.name == colname:                    
+    #                 col = Column(col.name, String(255))
+    #                 size = col_cnf.get('size',False)
+    #                 if size:
+    #                     col = Column(col.name, String(size))
+    #             if col.name not in columns_dict.keys():
+    #                 columns_dict[col.name] = col
+    #     columns = list(columns_dict.values())
+        
+        
+    #     table_args = [PrimaryKeyConstraint(*pk_cols)]
+    #     print(*table_args)
+    #     target_table_object = Table(
+    #         target_table, target_metadata, *columns, *table_args
+    #     )
+
+    #     # Create the table in the target database
+    #     with self.engine.begin() as conn:
+    #         target_table_object.create(conn)
+    #     print(source_schema)
+    def create_table(self, source_schema: Table):
         self.logger.info('Creating table from source schema.')
         target_schema = self.config.get('schema')
         target_table = self.config.get('table')
         source_schema.name = target_table
-         # Create a new table with the same structure
+        # Create a new table with the same structure
         target_metadata = MetaData(schema=target_schema)
-        columns_dict = {} #[col.copy() for col in source_schema.columns]
-        pk_cols = [col.name for col in source_schema.primary_key]
-        for colname, col_cnf in self.config.get('target_table_definition',{}).items():
-            print(colname)
-            for col in source_schema.columns:                
-                #col: Column = None
-                if col.name == colname:                    
-                    col = Column(col.name, String(255))
-                    size = col_cnf.get('size',False)
-                    if size:
-                        col = Column(col.name, String(size))
-                if col.name not in columns_dict.keys():
-                    columns_dict[col.name] = col
-        columns = list(columns_dict.values())
-        print(columns)
-        table_args = [PrimaryKeyConstraint(*pk_cols).create()]
-        target_table_object = Table(
-            target_table, target_metadata, *columns, *table_args
-        )
+        columns_dict = {}
+        #pk_cols = [col for col in getattr(source_schema, 'primary_key', [])]
+        pk_cols = [] #[col for col in source_schema.primary_key]
+        for col in source_schema.primary_key:
+            if col.name in self.config.get('target_table_definition',{}).keys():
+                col_cnf = self.config.get('target_table_definition',{})[col.name]
+                col_type = get_column_type(col_cnf.get('type', 'VARCHAR'))()
+                if col_cnf.get('size'):
+                    col_type.length = col_cnf['size']
+                col = col.copy()
+                col.type = col_type
+                #col = Column(col.name, String(255),primary_key=True)
+                
+            pk_cols.append(col)
+        
+        
+        for col in source_schema.columns:
+            for colname, col_cnf in self.config.get('target_table_definition', {}).items():
+                if col.name == colname:
+                    col_type = get_column_type(col_cnf.get('type', 'VARCHAR'))()
+                    if col_cnf.get('size'):
+                        col_type.length = col_cnf['size']
+                    if col_cnf.get('precision'):
+                        col_type.precision = col_cnf['precision']
+                    if col_cnf.get('scale'):
+                        col_type.scale = col_cnf['scale']
+                    columns_dict[col.name] = col.copy()
+                    columns_dict[col.name].type = col_type
+            if not col.name in columns_dict.keys():
+                col2 = col.copy()
+                col_type = get_column_type(str(col.type))()
+                col2.type = col_type
+                columns_dict[col.name] = col2
+        
+        # control columns to dict
+        if self.control_columns:
+            columns_dict['data_md5'] = Column('data_md5',String(32))
+            columns_dict['extract_date'] = Column('extract_date',BIGINT)        
+                
 
+        columns = list(columns_dict.values())
+        #print(columns)
+        table_args = []
+        if pk_cols:
+            print(pk_cols)
+            table_args.append(PrimaryKeyConstraint(*pk_cols))
+            target_table_object = Table(target_table, target_metadata, *columns, *table_args)
+        else:
+            print('NO PK IN THIS TABLE!')
+            print(columns)
+            target_table_object = Table(target_table, target_metadata, *columns)
         # Create the table in the target database
         with self.engine.begin() as conn:
             target_table_object.create(conn)
-        print(source_schema)
+        self.logger.info('Created table: %s.%s', target_schema, target_table)
 
-        
-    def save_data(self):
-        
+    def _do_upsert(self):
+        insmethod='UPSERT'
         if isinstance(self._data,pandas.DataFrame):
-            insmethod = self.config.get('insertion_method','UPSERT')
+            
             total_rows = len(self._data)
             self.logger.info(f'Insertion Method: {insmethod} for {total_rows} rows')
             self.backend.insert_on_conflict(
@@ -176,12 +250,12 @@ class PipelineTargetDatabase(PipelineTarget):
                 self.config['schema'],
                 self.config['table'],
                 if_exists='append',
-                conflict_action='update',
-                conflict_key=self.config['conflict_key']
+                conflict_action=self.config.get('conflict_action',None),
+                conflict_key=self.config.get('conflict_key',None)
             )
         if isinstance(self._data,list):
             for df in self._data:
-                insmethod = self.config.get('insertion_method','UPSERT')
+                
                 total_rows = len(df)
                 self.logger.info(f'Insertion Method: {insmethod} for {total_rows} rows')
                 self.backend.insert_on_conflict(
@@ -193,6 +267,38 @@ class PipelineTargetDatabase(PipelineTarget):
                     conflict_action='update',
                     conflict_key=self.config['conflict_key']
                 )
+
+    def _do_bulk_insert(self):
+        insmethod='BULK_INSERT'
+        if isinstance(self._data,pandas.DataFrame):
+            
+            total_rows = len(self._data)
+            self.logger.info(f'Insertion Method: {insmethod} for {total_rows} rows')
+            self.backend.bulk_insert(
+                self.engine,
+                self._data,
+                self.config['schema'],
+                self.config['table']
+            )
+        if isinstance(self._data,list):
+            for df in self._data:
+                
+                total_rows = len(df)
+                self.logger.info(f'Insertion Method: {insmethod} for {total_rows} rows')
+                self.backend.bulk_insert(
+                    self.engine,
+                    df,
+                    self.config['schema'],
+                    self.config['table']
+                )
+
+    def save_data(self):
+        insmethod = self.config.get('insertion_method','UPSERT')
+        match insmethod.upper():
+            case 'UPSERT':
+                self._do_upsert()
+            case 'BULK_INSERT':
+                self._do_bulk_insert()
         
         
 

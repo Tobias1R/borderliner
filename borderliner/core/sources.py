@@ -33,7 +33,7 @@ class PipelineSource:
             self.pipeline_name = str(self.pipeline_pid)
             self.logger.warning('Pipeline source did not received the pipeline_name, using pid.')
         self.pipeline_name = self.pipeline_name.replace(' ','_')
-        
+        self.control_columns_function = kwargs.get('control_columns_function',None)
     
     def extract(self):
         extracted_rows = self.metrics['total_rows']
@@ -165,7 +165,9 @@ class PipelineSourceDatabase(PipelineSource):
             )
             data = pandas.read_sql_query(query,self.engine)
             if self.kwargs.get('dump_data_csv',False):
-                filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.csv'                
+                filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.csv' 
+                if self.control_columns_function:
+                    data = self.control_columns_function(data)               
                 data.to_csv(
                     filename,
                     header=True,
@@ -195,8 +197,10 @@ class PipelineSourceDatabase(PipelineSource):
             slice_index = 1
             if self.kwargs.get('dump_data_csv',False):
                 for df in data:
-                    print(df)
-                    filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.csv'                
+                    
+                    filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.csv'
+                    if self.control_columns_function:
+                        df = self.control_columns_function(df)                 
                     df.to_csv(
                         filename,
                         header=True,
@@ -211,7 +215,10 @@ class PipelineSourceDatabase(PipelineSource):
                 self.get_query('extract'),
                 self.engine)
             if self.kwargs.get('dump_data_csv',False):
-                filename = f'{self.pipeline_name}_slice_FULL.csv'                
+                filename = f'{self.pipeline_name}_slice_FULL.csv'
+                if self.control_columns_function:
+                    
+                    data = self.control_columns_function(data)                 
                 data.to_csv(
                     filename,
                     header=True,
