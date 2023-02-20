@@ -27,22 +27,23 @@ class EtlPipeline(Pipeline):
         self.source.extract()
         if self.config.generate_control_columns:
             self.logger.info('setting up control columns')
-            
+            data_md5_label = self.get_control_columns_names().get('data_md5_label','brdr_data_md5')
+            extract_date_label = self.get_control_columns_names().get('extract_date_label','brdr_extract_date')
             if isinstance(self.source._data,pandas.DataFrame):
-                self.source._data['data_md5'] = gen_md5(
+                self.source._data[data_md5_label] = gen_md5(
                         self.source._data,
                         ignore=self.config.ignore_md5_fields
                     )
-                self.source._data['extract_date'] = str(time.strftime("%Y%m%d%H%M%S"))
+                self.source._data[extract_date_label] = str(time.strftime("%Y%m%d%H%M%S"))
                 
             elif isinstance(self.source._data,list) or isinstance(self.source._data,type(iter([]))):
                 newlist = []
                 for df in self.source._data:
-                    df['data_md5'] = gen_md5(
+                    df[data_md5_label] = gen_md5(
                         df,
                         ignore=self.config.ignore_md5_fields
                     )
-                    df['extract_date'] = str(time.strftime("%Y%m%d%H%M%S"))
+                    df[extract_date_label] = str(time.strftime("%Y%m%d%H%M%S"))
                     newlist.append(df)
                 self.source._data = newlist
         else:
@@ -65,11 +66,14 @@ class EtlPipeline(Pipeline):
         if self.config.dump_data_csv:
             for filename in self.source.csv_chunks_files:
                 #file_name, bucket, object_name=None
-                self.env.upload_file_to_storage(
-                    file_name=filename,
-                    storage_root=self.env.storage_paths['storage_root'],
-                    object_name=self.env.storage_paths['temp_files_dir']+'/'+filename
-                )
+                if self.config.upload_dumps_to_storage:
+                    self.env.upload_file_to_storage(
+                        file_name=filename,
+                        storage_root=self.env.storage_paths['storage_root'],
+                        object_name=self.env.storage_paths['temp_files_dir']+'/'+filename
+                    )
+                else:
+                    self.logger.info("File uploads disabled in pipeline configuration.")
         self.load_to_target()
         #self.logger.info(self.target.metrics)
         

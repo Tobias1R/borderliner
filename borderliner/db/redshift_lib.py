@@ -138,6 +138,9 @@ class RedshiftBackend(conn_abstract.DatabaseBackend):
                 conflict_key = ','.join(str(e) for e in conflict_key)
             else:
                 join_key = 'ods1.'+conflict_key+' = '+'stg.'+conflict_key
+                update_where_clause += 'ods1.' +conflict_key+' = '+'stg.'+conflict_key
+                update_where_clause2 += 'ods.' +conflict_key+' = '+'stg.'+conflict_key
+                bulk_insert_where_clause += 'ods1.' +conflict_key+' IS NULL'
 
             data = [tuple(x) for x in df.values]
             col_names = ','.join(str(e) for e in df.columns)
@@ -150,8 +153,9 @@ class RedshiftBackend(conn_abstract.DatabaseBackend):
                 index += 1
             
             # save data in staging table
-            INSERT_SQL = f"""INSERT INTO {self.staging_schema}.{self.staging_table} ({col_names})
-                                        VALUES %s """
+            INSERT_SQL = f"""INSERT INTO 
+                {self.staging_schema}.{self.staging_table} ({col_names})
+                VALUES %s """
             total_bulk = len(data)
             self.logger.info(f'Bulk insert {total_bulk} records')
             execute_values(
@@ -170,8 +174,8 @@ class RedshiftBackend(conn_abstract.DatabaseBackend):
                         ON {join_key} 
                         WHERE {update_where_clause}) as stg
                     WHERE {update_where_clause2}
-
                 """
+                
                 self.logger.info('Performing updates.')
                 cursor.execute(UPDATE_SQL)
                 

@@ -1,0 +1,2 @@
+include borderliner/admin/templates/*
+include borderliner/admin/scripts/*

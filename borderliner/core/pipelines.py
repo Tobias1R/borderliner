@@ -48,13 +48,17 @@ logging.basicConfig(
 logger = logging.getLogger()
 
 
-def set_control_columns(df:pandas.DataFrame,ignore_md5_fields:list=[])->pandas.DataFrame:
-    print('WELL, HERE I AM')
-    df['data_md5'] = gen_md5(
+def set_control_columns(
+        df:pandas.DataFrame,
+        ignore_md5_fields:list=[],
+        control_columns_names:dict={})->pandas.DataFrame:
+    data_md5_label = control_columns_names.get('data_md5','brdr_data_md5')
+    extract_date_label = control_columns_names.get('extract_date','brdr_extract_date')
+    df[data_md5_label] = gen_md5(
                     df,
                     ignore=ignore_md5_fields
                 )
-    df['extract_date'] = str(time.strftime("%Y%m%d%H%M%S"))
+    df[extract_date_label] = str(time.strftime("%Y%m%d%H%M%S"))
     return df
 
 class PhaseTracker:
@@ -107,7 +111,9 @@ class PipelineConfig:
         self.target = {}
         self.csv_filename_prefix = ''
         self.dump_data_csv = False
+        self.upload_dumps_to_storage = False
         self.generate_control_columns = False
+        self.control_columns_names = {}
         self.ignore_md5_fields = []
         self.md5_ignore_fields = []
         self.create_target_tables = False
@@ -115,7 +121,8 @@ class PipelineConfig:
         self.storage = {}
         # clear dump files after action
         self.clear_dumps = False
-
+        
+        self.alchemy_log_level = 'ERROR'
         try:
             f = open(source,'r+')
             logger.info(f'loading file {source}')
@@ -221,7 +228,20 @@ class Pipeline:
 
         self.logger.info(f'{self.config.pipeline_name} loaded.')
     
-    
+    def get_control_columns_names(self)->dict:
+        control_columns_names = self.config.control_columns_names
+        data_md5_label = control_columns_names.get('data_md5','brdr_data_md5')
+        extract_date_label = control_columns_names.get('extract_date','brdr_extract_date')
+        return {
+            'data_md5_label': data_md5_label,
+            'extract_date_label': extract_date_label
+        }
+
+    def set_control_columns(self,data:pandas.DataFrame):
+        return set_control_columns(
+            data,
+            self.config.ignore_md5_fields,
+            self.config.control_columns_names)
         
     def _clean_csv_chunk_files(self):
         #self.csv_chunks_files = [file for file in self.csv_chunks_files if not file.endswith('.csv')]
@@ -234,6 +254,8 @@ class Pipeline:
         # self.csv_chunks_files = [file for file in self.csv_chunks_files if not file.endswith('.csv')]
 
     def _configure_pipeline(self,*args,**kwargs):
+        alchemy_log_level = self.config.alchemy_log_level
+        logging.getLogger('sqlalchemy.engine').setLevel(alchemy_log_level)
         self._configure_environment(self.config['cloud'])
         
         if self.kwargs.get('no_source',False):
@@ -297,7 +319,7 @@ class Pipeline:
                         dump_data_csv=self.config.dump_data_csv,
                         pipeline_pid=self.pid,
                         pipeline_name=self.config.pipeline_name,
-                        control_columns_function=set_control_columns
+                        control_columns_function=self.set_control_columns
                     )
                     return
                 case 'FILE':
@@ -305,12 +327,12 @@ class Pipeline:
                         enviroment=self.env,
                         pipeline_pid=self.pid,
                         pipeline_name=self.config.pipeline_name,
-                        control_columns_function=set_control_columns)
+                        control_columns_function=self.set_control_columns)
                     return
                 case 'API':
                     self.source = PipelineSourceApi(src,
                         pipeline_name=self.config.pipeline_name,
-                        control_columns_function=set_control_columns)
+                        control_columns_function=self.set_control_columns)
                     return
         raise ValueError('Unknown data source')
 
@@ -340,11 +362,12 @@ class Pipeline:
             match str(tgt['target_type']).upper():
                 case 'DATABASE':
                     self.target = PipelineTargetDatabase(
-                        tgt,
+                        self.config,
                         dump_data_csv=self.config.dump_data_csv,
                         pipeline_pid=self.pid,
                         csv_chunks_files=self.source.csv_chunks_files,
-                        control_columns=self.config.generate_control_columns)
+                        control_columns=self.config.generate_control_columns,
+                        control_columns_names=self.get_control_columns_names())
                     if self.config.create_target_tables:
                         if self.source is not None:
                             source_schema = self.source.inspect_source()                            
@@ -392,6 +415,9 @@ class Pipeline:
         print('-'.join(['-' for x in range(0,70)]))
 
     def print_metrics(self):
+        if self.source:
+            for metric, value in self.source.metrics.items():
+                self.logger.info(f"{metric.capitalize()}: {value}")
         if self.kwargs.get('no_target',False):
             pass
         else:

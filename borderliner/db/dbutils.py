@@ -1,3 +1,4 @@
+import re
 from sqlalchemy import types
 db2_to_postgres = {
     'SMALLINT': 'SMALLINT',
@@ -64,10 +65,11 @@ def get_column_type(db_type: str) -> types.TypeEngine:
         'DATETIMEOFFSET': types.DateTime,
         'DATETIME2': types.DateTime,
         'STRING': types.String,
-        'DOUBLE_PRECISION': types.Numeric
+        'DOUBLE_PRECISION': types.Float
     }
 
     try:
-        return type_map[db_type.upper()]
+        new_string = re.sub(r'^VARCHAR\(\d+\)', 'VARCHAR', db_type.upper())
+        return type_map[new_string]
     except KeyError:
         raise ValueError(f'Unsupported data type: {db_type}')

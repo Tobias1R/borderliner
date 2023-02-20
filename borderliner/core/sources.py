@@ -25,8 +25,7 @@ class PipelineSource:
         self._data:pandas.DataFrame|list = None
         self.chunk_size = config.get('chunk_size',-1)
         self.metrics:dict = {
-            'total_rows':0,
-            'processed_rows':0
+            'total_rows':0
         }
         self.pipeline_name:str = self.kwargs.get('pipeline_name',False)
         if not self.pipeline_name:
@@ -45,6 +44,7 @@ class PipelineSource:
     @property
     def data(self):
         source_empty = True
+        
         if isinstance(self._data, type(iter([]))):
             source_empty = False
         elif isinstance(self._data,list):
@@ -164,6 +164,7 @@ class PipelineSourceDatabase(PipelineSource):
                 **item
             )
             data = pandas.read_sql_query(query,self.engine)
+            self.metrics['total_rows'] += len(data)
             if self.kwargs.get('dump_data_csv',False):
                 filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.csv' 
                 if self.control_columns_function:
@@ -188,6 +189,7 @@ class PipelineSourceDatabase(PipelineSource):
             self.extract_by_iteration()
             super().extract()
             return
+        
         if self.chunk_size > 0: 
             data = pandas.read_sql_query(
                 self.get_query('extract'),
@@ -214,6 +216,7 @@ class PipelineSourceDatabase(PipelineSource):
             data = pandas.read_sql_query(
                 self.get_query('extract'),
                 self.engine)
+            self.metrics['total_rows'] += len(data)
             if self.kwargs.get('dump_data_csv',False):
                 filename = f'{self.pipeline_name}_slice_FULL.csv'
                 if self.control_columns_function:
@@ -225,8 +228,9 @@ class PipelineSourceDatabase(PipelineSource):
                     index=False
                 )
                 self.csv_chunks_files.append(filename)
-                self.metrics['total_rows'] += len(data)
+                
             self._data = data
+        
         return super().extract()    
 
     def get_query(self,query:str='extract'):

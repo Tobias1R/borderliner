@@ -1,0 +1,52 @@
+type: 'ETL'
+
+cloud: aws.yml
+
+pipeline_name: {pipeline_name}
+# set true i'll force pipeline to pass data through csv dumps
+# and don't hold the entire dataset on memory.
+# some database supports COPY method from cloud storage
+# you can define the insertion_method: copy on target
+dump_data_csv: False
+
+generate_control_columns: True
+
+create_target_tables: True
+
+alchemy_log_level: CRITICAL
+
+source:
+  source_type: DATABASE
+  type: {source_type}
+  host: "host.docker.internal"
+  port: 5433
+  database: postgres
+  schema: {source_schema}
+  username: postgres
+  password: $ENV_devpg_pwd
+  connection_try: 4
+  sleep_try: 2
+  table: {source_table}
+  connection: new
+  #chunk_size: 10000
+  queries:
+    extract: SELECT DISTINCT * from public.{source_table} WHERE {iteration_field} = '{{iteration_field}}' order by {iteration_field},period limit 10000; 
+    iterate: select distinct {iteration_field} from public.{source_table} limit 10;
+
+target:
+  target_type: DATABASE
+  type: {target_type}
+  host: host.docker.internal
+  port: 50000
+  database: testdb
+  schema: {target_schema}
+  username: db2inst1
+  password: plade33
+  connection_try: 4
+  sleep_try: 2
+  table: {target_table}
+  connection: new
+  #insertion_method: BULK_INSERT
+  conflict_key: 'brdr_data_md5'
+  conflict_action: update
+  

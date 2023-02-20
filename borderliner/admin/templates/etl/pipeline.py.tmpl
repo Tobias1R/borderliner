@@ -1,0 +1,12 @@
+from borderliner.core import pipelines,etl
+import pandas
+
+def transform(data:pandas.DataFrame,*args,**kwargs):
+    # your transform code goes here!
+    print('your is not being transformed')
+    
+
+if __name__ == '__main__':
+    p = etl.EtlPipeline("{config_yml_file}")
+    p.transform = transform
+    p.find_entry_point()

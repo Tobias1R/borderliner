@@ -33,12 +33,15 @@ with open('requirements.txt') as f:
 
 setup(
     name='borderliner',
-    version='0.0.1',
-    description='The insightful data pipeline framework',
+    version='0.1.1',
+    description='The ultimate data pipeline framework',
     author='Tobias Rocha',
     author_email='tobias_rocha@yahoo.com',
     packages=find_packages(),
     install_requires=install_requires,
+    package_data={
+        'borderliner': ['admin/templates/*', 'admin/scripts/*']
+    },
 )
 version = git_version()
 print(f'installed {version}')

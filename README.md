@@ -66,11 +66,11 @@ source:
   password: $ENV_devpg_pwd
   connection_try: 4
   sleep_try: 2
-  table: informacao_mercado
+  table: your_table
   connection: new
   queries:
-    extract: SELECT * from public.informacao_mercado; 
-    iterate: select distinct versao from public.informacao_mercado limit 10;
+    extract: SELECT * from public.your_table; 
+    iterate: select distinct versao from public.your_table limit 10;
 
 # REDSHIFT TARGET WITH UPDATE BY KEY
 target:
@@ -80,13 +80,13 @@ target:
   port: 5439
   database: $ENV_ods_db
   staging_schema: staging
-  staging_table: informacao_mercado
+  staging_table: your_table
   schema: public
   username: $ENV_ods_rw_user
   password: $ENV_ods_rw_pwd
   connection_try: 4
   sleep_try: 2
-  table: informacao_mercado
+  table: your_table
   connection: new
   conflict_key: ['timestamp_utc', 'dia_mercado', 'hora_mercado', 'versao']
   conflict_action: update
