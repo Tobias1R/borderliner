@@ -76,12 +76,15 @@ class PipelineTarget:
         return data
     
     def configure(self):
+        db_type = str(self.config['type']).upper()
+        
         self.config = self.replace_env_vars(self.config)
         self.user = self.config['username']
         self.password = self.config['password']
         self.host = self.config['host']
         self.port = self.config['port']
-        match str(self.config['type']).upper():
+        
+        match db_type:
             case 'POSTGRES':
                 self.backend = PostgresBackend(
                     host=self.host,
@@ -108,7 +111,7 @@ class PipelineTarget:
                     password=self.password,
                     port=self.port
                 )
-        
+        self.logger.info(f'backend for {db_type} loaded')
         self.engine = self.backend.get_engine()
         self.connection = self.backend.get_connection()
     

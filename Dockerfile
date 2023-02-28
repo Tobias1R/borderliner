@@ -9,14 +9,22 @@ RUN apt-get update && apt-get install -y \
     unixodbc \
     libpq-dev \
     netcat \
-    g++
+    g++ git
 
-RUN mkdir /opt/borderliner
+# RUN mkdir /opt/borderliner
 
-COPY . /opt/borderliner
+# COPY . /opt/borderliner
 
-WORKDIR /opt/borderliner
+# WORKDIR /opt/borderliner
 
-RUN python setup.py install
+# RUN python setup.py install
+
+COPY docker/setup.sh /tmp/setup.sh
+
+# Run the bash script
+RUN chmod +x /tmp/setup.sh && /tmp/setup.sh
+
+# Cleanup
+RUN rm -rf /tmp/setup.sh
 
 CMD ["bash"]

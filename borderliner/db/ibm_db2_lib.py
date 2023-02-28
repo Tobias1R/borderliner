@@ -20,6 +20,7 @@ logging.basicConfig()
 class IbmDB2Backend(conn_abstract.DatabaseBackend):
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
+        self.logger.info('Initializing IBMDB2 backend')
         self.interface_name = 'DB2'
         self.alchemy_engine_flag = 'db2+ibm_db'
         self.expected_connection_args = [
