@@ -211,6 +211,7 @@ class Pipeline:
         self.pipeline_type:str = PIPELINE_TYPE_PROCESS
         self.config:PipelineConfig = None
         
+        
         if isinstance(config,str):
             if os.path.isfile(config):
                 self.config = PipelineConfig(config)
@@ -224,6 +225,10 @@ class Pipeline:
         self.source:PipelineSource = None
         self.target:PipelineTarget = None
         
+        alchemy_log_level = self.config.alchemy_log_level
+        logging.getLogger('sqlalchemy.engine').setLevel(alchemy_log_level)
+        self._configure_environment(self.config['cloud'])
+
         self._configure_pipeline(kwargs)
 
         self.logger.info(f'{self.config.pipeline_name} loaded.')
@@ -254,9 +259,7 @@ class Pipeline:
         # self.csv_chunks_files = [file for file in self.csv_chunks_files if not file.endswith('.csv')]
 
     def _configure_pipeline(self,*args,**kwargs):
-        alchemy_log_level = self.config.alchemy_log_level
-        logging.getLogger('sqlalchemy.engine').setLevel(alchemy_log_level)
-        self._configure_environment(self.config['cloud'])
+        
         
         if self.kwargs.get('no_source',False):
             self.logger.info('no source for this run')
@@ -382,10 +385,20 @@ class Pipeline:
                             self.logger.info(f'The table {schema}.{table_name} exists.')
                     return
                 case 'FILE':
-                    self.target = PipelineTargetFlatFile(tgt)
+                    self.target = PipelineTargetFlatFile(
+                        self.config,
+                        pipeline_pid=self.pid,
+                        csv_chunks_files=self.source.csv_chunks_files,
+                        control_columns=self.config.generate_control_columns,
+                        control_columns_names=self.get_control_columns_names())
                     return
                 case 'API':
-                    self.target = PipelineTargetApi(tgt)
+                    self.target = PipelineTargetApi(
+                        self.config,
+                        pipeline_pid=self.pid,
+                        csv_chunks_files=self.source.csv_chunks_files,
+                        control_columns=self.config.generate_control_columns,
+                        control_columns_names=self.get_control_columns_names())
                     return
         raise ValueError('Unknown data target')
 

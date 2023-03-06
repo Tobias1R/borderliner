@@ -79,10 +79,10 @@ class PipelineTarget:
         db_type = str(self.config['type']).upper()
         
         self.config = self.replace_env_vars(self.config)
-        self.user = self.config['username']
-        self.password = self.config['password']
-        self.host = self.config['host']
-        self.port = self.config['port']
+        self.user = self.config.get('username',None)
+        self.password = self.config.get('password',None)
+        self.host = self.config.get('host',None)
+        self.port = self.config.get('port',None)
         
         match db_type:
             case 'POSTGRES':
@@ -129,7 +129,8 @@ class PipelineTarget:
         else:
             self._data=data
             self.save_data()
-        self.metrics = self.backend.execution_metrics
+        if self.backend:
+            self.metrics = self.backend.execution_metrics
 
     def save_data(self):
         pass
@@ -286,4 +287,45 @@ class PipelineTargetApi(PipelineTarget):
     pass
 
 class PipelineTargetFlatFile(PipelineTarget):
-    pass
+    
+    def configure(self):
+        self.logger.info('Target flat file configuration')
+    
+    def get_filename(self):
+        file_extension = self.config.get('extension','CSV')
+        filename = 'filename'
+        cnf_filename = self.config.get('filename','default')
+        if '{PID}' in cnf_filename:
+            filename = str(cnf_filename).replace('{PID}',str(self.pipeline_pid))
+        elif '{YYYYMMDD}' in cnf_filename:
+            filename = str(cnf_filename).replace('{YYYYMMDD}',str(self.pipeline_pid)[:8])
+        else:
+            filename = cnf_filename
+        return f'{filename}.{file_extension}'
+    
+    def _save_to_csv(self):
+        filename = self.get_filename()
+        if isinstance(self._data,pandas.DataFrame):
+            self._data.to_csv(
+                filename,
+                sep=self.config.get('separator',','),
+                header=self.config.get('header',True),
+                index=self.config.get('index',False)
+            )
+        if isinstance(self._data,list):
+            for i, df in enumerate(self._data):
+                header = True if i == 0 else False
+                df.to_csv(
+                    filename,
+                    sep=self.config.get('separator',','),
+                    header=header,
+                    index=self.config.get('index',False),
+                    mode='a'
+                )
+        self.logger.info(f'{filename} saved')
+
+    def save_data(self):
+        file_extension = self.config.get('extension','CSV')
+        if str(file_extension).upper() == 'CSV':
+            self._save_to_csv()
+        return super().save_data()

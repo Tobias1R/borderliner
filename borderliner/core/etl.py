@@ -75,5 +75,13 @@ class EtlPipeline(Pipeline):
                 else:
                     self.logger.info("File uploads disabled in pipeline configuration.")
         self.load_to_target()
+        # target flat file only
+        if self.config.target.get('save_copy_in_storage',False):
+            filename = self.target.get_filename()
+            self.env.upload_file_to_storage(
+                        file_name=filename,
+                        storage_root=self.env.storage_paths['storage_root'],
+                        object_name=self.env.storage_paths['temp_files_dir']+'/'+filename
+                    )
         #self.logger.info(self.target.metrics)
         
