@@ -29,7 +29,8 @@ def git_version():
 
 
 with open('requirements.txt') as f:
-    install_requires = f.read().strip().split('\n')
+    install_requires = [pkg for pkg in f.read().strip().split('\n') if not pkg.startswith('borderliner==')]
+
 
 setup(
     name='borderliner',
