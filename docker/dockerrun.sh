@@ -29,11 +29,13 @@ file_locations="/app/locations.txt"
 # The directory where the files will be downloaded
 download_dir="/app/"
 
+aws s3 ls s3://uq-data-pipelines-dev
 # Loop through each file location in the list and download the file
 while read location; do
     # Check if the location is an S3 URL
     if [[ $location == s3://* ]]; then
         # Download the file from S3
+        echo "[INFO] Downloading ${location}"
         aws s3 cp "$location" "$download_dir"
     # Check if the location is a GCP URL
     elif [[ $location == gs://* ]]; then
