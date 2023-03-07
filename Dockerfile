@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
     unixodbc \
     libpq-dev \
     netcat \
-    g++ git
+    g++ git unzip
 
 # ORACLE SUPPORT
 WORKDIR /opt/oracle
@@ -34,9 +34,20 @@ RUN apt-get install -y libgssapi-krb5-2
 
 COPY docker/setup.sh /usr/local/bin/setup_borderliner.sh
 COPY docker/dockerrun.sh /usr/local/bin/dockerrun.sh 
+
+# IBM I/Series
+COPY docker/drivers/ibm-iaccess-1.1.0.15-1.0.amd64.deb /opt/ibm-iaccess-1.1.0.15-1.0.amd64.deb 
+RUN dpkg -i /opt/ibm-iaccess-1.1.0.15-1.0.amd64.deb 
+
+COPY requirements.txt /requirements.txt
+RUN pip install -r /requirements.txt
+RUN pip install awscli
+
 # Run the bash script
-RUN chmod +x /usr/local/bin/setup.sh && /usr/local/bin/setup_borderliner.sh
+RUN chmod +x /usr/local/bin/setup_borderliner.sh && /usr/local/bin/setup_borderliner.sh
 RUN chmod +x /usr/local/bin/dockerrun.sh 
+
+
 
 
 CMD ["dockerrun.sh"]
