@@ -224,7 +224,7 @@ class Pipeline:
         
         self.source:PipelineSource = None
         self.target:PipelineTarget = None
-        
+
         alchemy_log_level = self.config.alchemy_log_level
         logging.getLogger('sqlalchemy.engine').setLevel(alchemy_log_level)
         self._configure_environment(self.config['cloud'])
@@ -243,10 +243,12 @@ class Pipeline:
         }
 
     def set_control_columns(self,data:pandas.DataFrame):
-        return set_control_columns(
-            data,
-            self.config.ignore_md5_fields,
-            self.config.control_columns_names)
+        if self.config.generate_control_columns:
+            return set_control_columns(
+                data,
+                self.config.ignore_md5_fields,
+                self.config.control_columns_names)
+        return data
         
     def _clean_csv_chunk_files(self):
         #self.csv_chunks_files = [file for file in self.csv_chunks_files if not file.endswith('.csv')]
@@ -254,7 +256,7 @@ class Pipeline:
         #Alternatively, you can use the following code to remove CSV files using os.remove():
         self.source.csv_chunks_files = list(set(self.source.csv_chunks_files))
         for file in self.source.csv_chunks_files:
-            if file.endswith('.csv'):
+            if file.endswith('.parquet'):
                 os.remove(file)
         # self.csv_chunks_files = [file for file in self.csv_chunks_files if not file.endswith('.csv')]
 
@@ -322,7 +324,8 @@ class Pipeline:
                         dump_data_csv=self.config.dump_data_csv,
                         pipeline_pid=self.pid,
                         pipeline_name=self.config.pipeline_name,
-                        control_columns_function=self.set_control_columns
+                        control_columns_function=self.set_control_columns,
+                        pipeline_config=self.config
                     )
                     return
                 case 'FILE':
@@ -330,12 +333,14 @@ class Pipeline:
                         enviroment=self.env,
                         pipeline_pid=self.pid,
                         pipeline_name=self.config.pipeline_name,
-                        control_columns_function=self.set_control_columns)
+                        control_columns_function=self.set_control_columns,
+                        pipeline_config=self.config)
                     return
                 case 'API':
                     self.source = PipelineSourceApi(src,
                         pipeline_name=self.config.pipeline_name,
-                        control_columns_function=self.set_control_columns)
+                        control_columns_function=self.set_control_columns,
+                        pipeline_config=self.config)
                     return
         raise ValueError('Unknown data source')
 
@@ -390,7 +395,8 @@ class Pipeline:
                         pipeline_pid=self.pid,
                         csv_chunks_files=self.source.csv_chunks_files,
                         control_columns=self.config.generate_control_columns,
-                        control_columns_names=self.get_control_columns_names())
+                        control_columns_names=self.get_control_columns_names(),
+                        dump_data_csv=self.config.dump_data_csv,)
                     return
                 case 'API':
                     self.target = PipelineTargetApi(
@@ -398,7 +404,8 @@ class Pipeline:
                         pipeline_pid=self.pid,
                         csv_chunks_files=self.source.csv_chunks_files,
                         control_columns=self.config.generate_control_columns,
-                        control_columns_names=self.get_control_columns_names())
+                        control_columns_names=self.get_control_columns_names(),
+                        dump_data_csv=self.config.dump_data_csv,)
                     return
         raise ValueError('Unknown data target')
 

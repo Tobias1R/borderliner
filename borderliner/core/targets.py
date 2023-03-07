@@ -121,9 +121,10 @@ class PipelineTarget:
     def load(self,data:pandas.DataFrame|list):
         if self.dump_data_csv:
             self.csv_chunks_files = list(set(self.csv_chunks_files))
+            self.csv_chunks_files.sort()
             for filename in self.csv_chunks_files:
-                self.logger.info(f'reading csv {filename}')
-                df = pandas.read_csv(filename)
+                self.logger.info(f'reading parquet {filename}')
+                df = pandas.read_parquet(filename)
                 self._data=df
                 self.save_data()
         else:
@@ -306,15 +307,25 @@ class PipelineTargetFlatFile(PipelineTarget):
     def _save_to_csv(self):
         filename = self.get_filename()
         if isinstance(self._data,pandas.DataFrame):
+            if os.path.exists(filename):
+                # file exists, append without header
+                header = False
+                mode = 'a'
+            else:
+                # file does not exist, create with header
+                header = self.config.get('header', True)
+                mode = 'w'
             self._data.to_csv(
                 filename,
                 sep=self.config.get('separator',','),
-                header=self.config.get('header',True),
-                index=self.config.get('index',False)
+                header=header,
+                index=self.config.get('index',False),
+                mode=mode
             )
         if isinstance(self._data,list):
             for i, df in enumerate(self._data):
                 header = True if i == 0 else False
+
                 df.to_csv(
                     filename,
                     sep=self.config.get('separator',','),

@@ -27,6 +27,7 @@ class PipelineSource:
         self.metrics:dict = {
             'total_rows':0
         }
+        self.pipeline_config = self.kwargs.get('pipeline_config',None)
         self.pipeline_name:str = self.kwargs.get('pipeline_name',False)
         if not self.pipeline_name:
             self.pipeline_name = str(self.pipeline_pid)
@@ -45,6 +46,9 @@ class PipelineSource:
     def data(self):
         source_empty = True
         
+        if len(self.csv_chunks_files) > 0:
+            return self.csv_chunks_files
+
         if isinstance(self._data, type(iter([]))):
             source_empty = False
         elif isinstance(self._data,list):
@@ -166,16 +170,18 @@ class PipelineSourceDatabase(PipelineSource):
             data = pandas.read_sql_query(query,self.engine)
             self.metrics['total_rows'] += len(data)
             if self.kwargs.get('dump_data_csv',False):
-                filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.csv' 
+                filename_csv = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.csv' 
+                filename_parquet = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
                 if self.control_columns_function:
-                    data = self.control_columns_function(data)               
-                data.to_csv(
-                    filename,
-                    header=True,
+                    data = self.control_columns_function(data)     
+                #if self.kwargs.get('dump_data_csv',False)  == 'CSV':  
+                filename = filename_parquet      
+                data.to_parquet(
+                    filename_parquet,
                     index=False
                 )
                 self.csv_chunks_files.append(filename)
-                self._data.append(data)
+                #self._data.append(data)
             else:
                 self._data.append(data)
             slice_index += 1
@@ -200,36 +206,35 @@ class PipelineSourceDatabase(PipelineSource):
             if self.kwargs.get('dump_data_csv',False):
                 for df in data:
                     
-                    filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.csv'
+                    filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
                     if self.control_columns_function:
                         df = self.control_columns_function(df)                 
-                    df.to_csv(
+                    df.to_parquet(
                         filename,
-                        header=True,
                         index=False
                     )
                     self.csv_chunks_files.append(filename)
                     slice_index += 1
                     self.metrics['total_rows'] += len(df)
-            self._data = data
+            else:
+                self._data = data
         else:
             data = pandas.read_sql_query(
                 self.get_query('extract'),
                 self.engine)
             self.metrics['total_rows'] += len(data)
             if self.kwargs.get('dump_data_csv',False):
-                filename = f'{self.pipeline_name}_slice_FULL.csv'
+                filename = f'{self.pipeline_name}_slice_FULL.parquet'
                 if self.control_columns_function:
                     
                     data = self.control_columns_function(data)                 
-                data.to_csv(
+                data.to_parquet(
                     filename,
-                    header=True,
                     index=False
                 )
                 self.csv_chunks_files.append(filename)
-                
-            self._data = data
+            else:    
+                self._data = data
         
         return super().extract()    
 

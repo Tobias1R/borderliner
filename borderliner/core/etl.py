@@ -62,10 +62,13 @@ class EtlPipeline(Pipeline):
     
     def run(self, *args, **kwargs):
         self.extract()
-        self.source._data = self.transform(self.source._data,*args, **kwargs)
+        #self.source._data = self.transform(self.source._data,*args, **kwargs)
         if self.config.dump_data_csv:
             for filename in self.source.csv_chunks_files:
                 #file_name, bucket, object_name=None
+                df = pandas.read_parquet(filename)
+                df:pandas.DataFrame = self.transform(df,*args, **kwargs)
+                df.to_parquet(filename)
                 if self.config.upload_dumps_to_storage:
                     self.env.upload_file_to_storage(
                         file_name=filename,
@@ -74,6 +77,9 @@ class EtlPipeline(Pipeline):
                     )
                 else:
                     self.logger.info("File uploads disabled in pipeline configuration.")
+        else:
+            self.source._data = self.transform(self.source._data,*args, **kwargs)
+            
         self.load_to_target()
         # target flat file only
         if self.config.target.get('save_copy_in_storage',False):
