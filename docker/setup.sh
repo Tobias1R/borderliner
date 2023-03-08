@@ -1,5 +1,6 @@
 #!/bin/bash
-
+cd /tmp
+rm -Rf borderliner
 # Clone the repository
 git clone https://github.com/Tobias1R/borderliner.git
 

@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
     unixodbc \
     libpq-dev \
     netcat \
-    g++ git unzip
+    g++ git unzip libxml2
 
 # ORACLE SUPPORT
 WORKDIR /opt/oracle
@@ -38,10 +38,14 @@ COPY docker/dockerrun.sh /usr/local/bin/dockerrun.sh
 # IBM I/Series
 COPY docker/drivers/ibm-iaccess-1.1.0.15-1.0.amd64.deb /opt/ibm-iaccess-1.1.0.15-1.0.amd64.deb 
 RUN dpkg -i /opt/ibm-iaccess-1.1.0.15-1.0.amd64.deb 
+RUN pip install ibm-db==3.1.4 ibm-db-sa==0.3.8
+
+RUN pip install awscli
+RUN pip install s3fs==2023.1.0 s3transfer==0.6.0
 
 COPY requirements.txt /requirements.txt
 RUN pip install -r /requirements.txt
-RUN pip install awscli
+
 
 # Run the bash script
 RUN chmod +x /usr/local/bin/setup_borderliner.sh && /usr/local/bin/setup_borderliner.sh

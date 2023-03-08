@@ -13,8 +13,8 @@ echo "[INFO] Downloading pipeline file locations"
 echo "[INFO] locations file: $locations"
 
 if [ ! -z "$locations" ]; then
-   aws s3 cp $locations /app/locations.txt
-   if [ ! -f "/app/locations.txt" ]; then
+   aws s3 cp $locations /app2/locations.txt
+   if [ ! -f "/app2/locations.txt" ]; then
        echo "[ERROR] Failed to download locations.txt"
        exit 1
    fi
@@ -24,18 +24,23 @@ else
 fi
 
 # The file containing the list of file locations
-file_locations="/app/locations.txt"
+file_locations="/app2/locations.txt"
 
 # The directory where the files will be downloaded
-download_dir="/app/"
+download_dir="/app2/"
 
-aws s3 ls s3://uq-data-pipelines-dev
+#aws s3 ls s3://uq-data-pipelines-dev/pipelines_v2/pret/
 # Loop through each file location in the list and download the file
 while read location; do
     # Check if the location is an S3 URL
     if [[ $location == s3://* ]]; then
+        # Get the filename from the S3 URL
+        filename=$(basename "$location")
+        location=$(echo "$location" | tr -d '\n')
+        location=$(echo $location | sed 's/\s*$//')
         # Download the file from S3
-        echo "[INFO] Downloading ${location}"
+        #echo "[INFO] AWS - Downloading ${location}"
+        #aws s3 cp s3://uq-data-pipelines-dev/pipelines_v2/pret/ /app2/ --recursive
         aws s3 cp "$location" "$download_dir"
     # Check if the location is a GCP URL
     elif [[ $location == gs://* ]]; then
