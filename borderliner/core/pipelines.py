@@ -163,7 +163,14 @@ class PipelineConfig:
                                 env_key,
                                 data_loaded[key][k]
                             ) 
-                        print('LOADED ',env_key,data_loaded[key][k])                 
+                        print('LOADED ',env_key,data_loaded[key][k]) 
+            elif isinstance(data_loaded[key],str):     
+                if str(data_loaded[key]).startswith('$ENV_'):
+                    env_key = str(data_loaded[key]).replace('$ENV_','')
+                    data_loaded[key] = os.getenv(
+                            env_key,
+                            data_loaded[key]
+                        )
             self.__setattr__(key,data_loaded[key])
 
 

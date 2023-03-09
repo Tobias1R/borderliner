@@ -69,7 +69,7 @@ source:
   table: your_table
   connection: new
   queries:
-    extract: SELECT * from public.your_table; 
+    extract: SELECT * from public.your_table where versao = '{versao}'; 
     iterate: select distinct versao from public.your_table limit 10;
 
 # REDSHIFT TARGET WITH UPDATE BY KEY
