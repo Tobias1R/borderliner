@@ -1,0 +1,45 @@
+from airflow.providers.slack.operators.slack_webhook import SlackWebhookOperator
+from airflow.hooks.base_hook import BaseHook
+from airflow import DAG
+from airflow.models import Variable
+import datetime
+import CRAFTABLE_TASK_WRAPPER as tw
+from botocore.exceptions import ClientError
+import boto3
+import os
+import pytz
+import traceback
+from functools import partial
+
+MAIN_S3_BUCKET = Variable.get("main_s3_bucket")
+
+SLACK_CONN_ID = Variable.get('slack_conn')
+
+# dag definition
+dag = DAG(
+    dag_id="{{ dag_id }}",
+    default_args={
+        "owner": "{{ owner }}",
+        "depends_on_past": {{ depends_on_past }},
+        "email": {{ email }},
+        "email_on_failure": {{ email_on_failure }},
+        "email_on_retry": {{ email_on_retry }},
+        "retries": {{ retries }},
+    },
+    default_view="{{ default_view }}",
+    schedule_interval="{{ schedule_interval }}",
+    start_date=datetime.datetime({{ start_year }}, {{ start_month }}, {{ start_day }}),
+    tags=[{{ tags }}],
+)
+# generate dag documentation
+dag.doc_md = __doc__
+
+# DAG tasks
+{% for task in tasks %}
+    {{ task.get_code()|indent(4) }}
+{% endfor %}
+
+# Dependencies
+{% for task in tasks %}
+{{ task.task_id }}
+{% endfor %}

@@ -14,21 +14,36 @@ fi
 
 echo "[INFO] Downloading pipeline manifest"
 
-echo "[INFO] locations file: $locations"
-
-if [ ! -z "$locations" ]; then
-   aws s3 cp $locations /pipeline/locations.txt
-   if [ ! -f "/pipeline/locations.txt" ]; then
-       echo "[ERROR] Failed to download locations.txt"
-       exit 1
-   fi
-else 
-   echo "[ERROR] locations file not specified."
-   exit 1
+echo "[INFO] manifest file: $manifest"
+MANIFEST_DESTINATION="pipeline/manifest.txt"
+if [ -z "$manifest" ]; then
+    echo "[ERROR] manifest file not specified."
+    exit 1
+elif [ -f "$manifest" ]; then
+    # if is a file
+    cp "$manifest" "$MANIFEST_DESTINATION"
+elif [[ "$manifest" == s3://* ]]; then
+    aws s3 cp "$manifest" "$MANIFEST_DESTINATION"
+elif [[ "$manifest" == gs://* ]]; then
+    gsutil cp "$manifest" "$MANIFEST_DESTINATION"
+elif [[ "$manifest" == az://* ]]; then
+    az storage blob download --container-name $AZURE_container_name --name "$manifest" --file "$MANIFEST_DESTINATION"
+elif [[ "$manifest" == ftp://* || "$manifest" == sftp://* ]]; then
+    curl -u "$FTP_USER:$FTP_PASSWORD" "$manifest" -o "$MANIFEST_DESTINATION"
+# elif [[ "$manifest" == http://* || "$manifest" == https://* ]]; then
+#     curl "$manifest" -o "$MANIFEST_DESTINATION"
+else
+    # Minio
+    mc cp "$manifest" "$MANIFEST_DESTINATION"
 fi
 
-# The file containing the list of file locations
-file_locations="/pipeline/locations.txt"
+if [ ! -f "$MANIFEST_DESTINATION" ]; then
+    echo "[ERROR] Failed to download $MANIFEST_DESTINATION"
+    exit 1
+fi
+
+# The file containing the list of file manifest
+file_manifest=$MANIFEST_DESTINATION
 
 # The directory where the files will be downloaded
 download_dir="/pipeline/"
@@ -41,6 +56,9 @@ download_dir="/pipeline/"
 while read location; do
     # Skip comment lines
     if [[ $location == \#* ]]; then
+        continue
+    # Skip empty lines
+    elif [[ -z "$location" ]]; then
         continue
     # Check if the location is an S3 URL
     elif [[ $location == s3://* ]]; then
@@ -79,13 +97,16 @@ while read location; do
             echo "Error: SFTP credentials not provided"
             exit 1
         fi
+    # Set environment variables from lines of the format "env var1="value1""
+    elif [[ $location =~ ^env\ (.*)=(.*)$ ]]; then
+        export ${BASH_REMATCH[1]}="${BASH_REMATCH[2]}"
     else
         # Get the filename from the location
         filename=$(basename "$location")
         # Download the file from the directory
         cp "$location" "$download_dir$filename"
     fi
-done < "$file_locations"
+done < "$file_manifest"
 
 # Check if there is a requirements.txt file in the download directory
 if [ -f "${download_dir}requirements.txt" ]; then

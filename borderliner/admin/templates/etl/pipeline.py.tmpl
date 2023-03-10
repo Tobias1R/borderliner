@@ -2,8 +2,20 @@ from borderliner.core import pipelines,etl
 import pandas
 
 def transform(data:pandas.DataFrame,*args,**kwargs):
-    # your transform code goes here!
-    print('your is not being transformed')
+    
+    def parse_df(df):
+       # your transform code goes here!
+       print('your data is not being transformed') # remove this warning
+       return df
+    
+    if isinstance(data,list):
+        for df in data:
+            df = parse_df(df)
+        return data
+    if isinstance(data,pandas.DataFrame):
+        df = parse_df(data)
+        return df
+    
     
 
 if __name__ == '__main__':
