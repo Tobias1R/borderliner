@@ -12,12 +12,8 @@ from borderliner.db.redshift_lib import RedshiftBackend
 from borderliner.db.ibm_db2_lib import IbmDB2Backend
 from borderliner.db.dbutils import get_column_type
 # logging
-logging.basicConfig(
-    stream=sys.stdout, 
-    level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s - %(message)s'
-    )
-logger = logging.getLogger()
+from borderliner.core.logs import get_logger
+logger = get_logger()
 
 class PipelineTarget:
     def __init__(self,config,*args,**kwargs) -> None:

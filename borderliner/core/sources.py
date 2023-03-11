@@ -8,12 +8,8 @@ from borderliner.db.conn_abstract import DatabaseBackend
 from borderliner.cloud import CloudEnvironment
 
 # logging
-logging.basicConfig(
-    stream=sys.stdout, 
-    level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s - %(message)s'
-    )
-logger = logging.getLogger()
+from borderliner.core.logs import get_logger
+logger = get_logger()
 
 class PipelineSource:
     def __init__(self,config:dict,*args,**kwargs) -> None:

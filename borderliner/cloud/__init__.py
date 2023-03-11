@@ -36,12 +36,8 @@ def list_files_sftp(host, port, username, password, remote_dir):
     return files
 
 # logging
-logging.basicConfig(
-    stream=sys.stdout, 
-    level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s - %(message)s'
-    )
-logger = logging.getLogger()
+from borderliner.core.logs import get_logger
+logger = get_logger()
 
 class CloudEnvironment:
     def __init__(self,source,*args,**kwargs) -> None:

@@ -40,12 +40,8 @@ def gen_md5(df:pandas.DataFrame,ignore=[])->pandas.Series:
     return df['md5']
 
 # logging
-logging.basicConfig(
-    stream=sys.stdout, 
-    level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s - %(message)s'
-    )
-logger = logging.getLogger()
+from borderliner.core.logs import get_logger
+logger = get_logger()
 
 
 def set_control_columns(
@@ -207,7 +203,7 @@ class Pipeline:
         self.tracker = PhaseTracker()
         self.runtime = datetime.now()
         self.pid = str(time.strftime("%Y%m%d%H%M%S")) + str(os.getpid())
-        self.logger = logging.getLogger()
+        self.logger = get_logger()
         self.tracker.phase('Initializing...')
         
         self.env:CloudEnvironment = None

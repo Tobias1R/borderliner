@@ -17,13 +17,8 @@ from sqlalchemy import create_engine, exc, text
 from sqlalchemy.engine import Engine
 
 # logging
-import logging
-logging.basicConfig(
-    stream=sys.stdout, 
-    level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s - %(message)s'
-    )
-logger = logging.getLogger()
+from borderliner.core.logs import get_logger
+logger = get_logger()
 class QueryStats(object):
     def __init__(self):
         self.count = 0
