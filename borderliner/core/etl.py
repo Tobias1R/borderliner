@@ -38,6 +38,7 @@ class EtlPipeline(Pipeline):
                 
             elif isinstance(self.source._data,list) or isinstance(self.source._data,type(iter([]))):
                 newlist = []
+                
                 for df in self.source._data:
                     df[data_md5_label] = gen_md5(
                         df,
@@ -62,12 +63,22 @@ class EtlPipeline(Pipeline):
     
     def run(self, *args, **kwargs):
         self.extract()
+        print_upload_info = True
         #self.source._data = self.transform(self.source._data,*args, **kwargs)
         if self.config.dump_data_csv:
             for filename in self.source.csv_chunks_files:
                 #file_name, bucket, object_name=None
                 df = pandas.read_parquet(filename)
-                df:pandas.DataFrame = self.transform(df,*args, **kwargs)
+                # collect meta info
+                meta_info = self.extract_meta_info(df)
+                self.data_lineage['source_data'] = meta_info
+
+                transformed_data = self.transform(df,*args, **kwargs)
+                if isinstance(transformed_data, pandas.DataFrame):
+                    df = transformed_data
+                    # collect meta info
+                    meta_info = self.extract_meta_info(df)
+                    self.data_lineage['transformed_data'] = meta_info
                 df.to_parquet(filename)
                 if self.config.upload_dumps_to_storage:
                     self.env.upload_file_to_storage(
@@ -76,9 +87,32 @@ class EtlPipeline(Pipeline):
                         object_name=self.env.storage_paths['temp_files_dir']+'/'+filename
                     )
                 else:
-                    self.logger.info("File uploads disabled in pipeline configuration.")
+                    if print_upload_info:
+                        self.logger.info("File uploads disabled in pipeline configuration.")
+                        print_upload_info = False
         else:
             self.source._data = self.transform(self.source._data,*args, **kwargs)
+            # if isinstance(self.source._data,pandas.DataFrame):
+            #     # collect meta info
+            #     meta_info = self.extract_meta_info(self.source._data)
+            #     self.data_lineage['source_data'] = meta_info
+            #     # transform
+                
+            #     meta_info = self.extract_meta_info(self.source._data)
+            #     self.data_lineage['transformed_data'] = meta_info
+            # elif isinstance(self.source._data,list) or isinstance(self.source._data,type(iter([]))):
+            #     newlist = []
+            #     for df in self.source._data:
+            #         # collect meta info
+            #         meta_info = self.extract_meta_info(df)
+            #         self.data_lineage['source_data'] = meta_info
+            #         # transform
+            #         df = self.transform(self.source._data,*args, **kwargs)
+            #         meta_info = self.extract_meta_info(df)
+            #         self.data_lineage['transformed_data'] = meta_info
+            #         newlist.append(df)
+            #     self.source._data = newlist
+
             
         self.load_to_target()
         # target flat file only

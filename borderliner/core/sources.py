@@ -1,3 +1,4 @@
+import importlib
 import io
 import os
 import pandas
@@ -102,7 +103,20 @@ class PipelineSourceDatabase(PipelineSource):
         table_name = f'{self.table}'
         return self.backend.inspect_table(self.schema,table_name)
     
+    def replace_env_vars(self,data):
+        for key, value in data.items():
+            if isinstance(value, dict):
+                self.replace_env_vars(value)
+            elif isinstance(value, str) and value.startswith("$ENV_"):
+                env_var = value[5:]
+                if env_var in os.environ:
+                    data[key] = os.environ[env_var]
+                else:
+                    raise ValueError(f"Environment variable {env_var} not found")
+        return data
+
     def configure(self):
+        return self.configure_dynamic()
         self.user = self.config['username']
         self.password = self.config['password']
         self.host = self.config['host']
@@ -141,6 +155,56 @@ class PipelineSourceDatabase(PipelineSource):
         self.engine = self.backend.get_engine()
         self.connection = self.backend.get_connection()
     
+    def configure_dynamic(self):
+        db_type = str(self.config['type']).upper()
+        backend_class = self.config.get('backend_class', None) # get backend_class from config
+        
+        self.config = self.replace_env_vars(self.config)
+        self.user = self.config.get('username', None)
+        self.password = self.config.get('password', None)
+        self.host = self.config.get('host', None)
+        self.port = self.config.get('port', None)
+        
+        # check for external backend option
+        if backend_class is None:
+            # check for external backend class
+            external_backend_class = self.config.get('external_backend_class', None)
+            if external_backend_class is not None:
+                backend_class = external_backend_class
+        
+        # dynamically import backend class based on backend_class variable
+        if backend_class is not None:
+            if isinstance(backend_class, str):
+                backend_module_path = self.config.get('backend_module_path', '')
+                backend_module = self.config.get('backend_module','db_backend')
+                sys.path.append(backend_module_path)
+                backend_module = importlib.import_module(f"{backend_module}")
+                backend_class = getattr(backend_module, backend_class)
+        else:
+            # default to selecting backend based on db_type
+            if db_type == 'POSTGRES':
+                from borderliner.db.postgres_lib import PostgresBackend
+                backend_class = PostgresBackend
+            elif db_type == 'REDSHIFT':
+                from borderliner.db.redshift_lib import RedshiftBackend
+                backend_class = RedshiftBackend
+            elif db_type == 'IBMDB2':
+                from borderliner.db.ibm_db2_lib import IbmDB2Backend
+                backend_class = IbmDB2Backend
+        
+        self.backend = backend_class(
+            host=self.host,
+            database=self.config['database'],
+            user=self.user,
+            password=self.password,
+            port=self.port,
+            **self.config.get('backend_options', {}) # pass backend options from config
+        )
+        self.queries = self.config['queries']
+        self.logger.info(f'backend for {db_type} loaded')
+        self.engine = self.backend.get_engine()
+        self.connection = self.backend.get_connection()
+
     def populate_deltas(self):
         pass
 

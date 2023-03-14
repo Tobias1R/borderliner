@@ -7,7 +7,7 @@ from typing import Union, TextIO
 import pandas
 import yaml
 import hashlib
-
+import json
 
 from .exceptions import PipelineConfigException
 from .sources import (
@@ -205,7 +205,7 @@ class Pipeline:
         self.pid = str(time.strftime("%Y%m%d%H%M%S")) + str(os.getpid())
         self.logger = get_logger()
         self.tracker.phase('Initializing...')
-        
+        self.data_lineage = {}
         self.env:CloudEnvironment = None
 
         self.kwargs = kwargs
@@ -236,6 +236,14 @@ class Pipeline:
 
         self.logger.info(f'{self.config.pipeline_name} loaded.')
     
+    def extract_meta_info(self, df):
+        meta_info = {
+            'column_names': list(df.columns),
+            'column_types': {col: str(dtype) for col, dtype in df.dtypes.items()},
+            'total_columns': len(df.columns)
+        }
+        return meta_info
+
     def get_control_columns_names(self)->dict:
         control_columns_names = self.config.control_columns_names
         data_md5_label = control_columns_names.get('data_md5','brdr_data_md5')
@@ -446,7 +454,8 @@ class Pipeline:
         else:
             for metric, value in self.target.metrics.items():
                 self.logger.info(f"{metric.capitalize()}: {value}")
-
+        self.logger.info(yaml.dump(self.data_lineage, indent=4))
+        
 
     def get_query(self,query:str='extract'):
         if query == 'extract':

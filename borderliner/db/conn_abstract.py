@@ -88,6 +88,15 @@ class DatabaseBackend:
             }
         #self.set_engine()
         self.create_table = False
+    
+    def extract_values(self,values):
+        t = []
+        for x in values:
+            if x is None or pandas.isna(x):
+                x = None
+            xx = x
+            t.append(xx)
+        return tuple(t)
 
     def inspect_table(self,schema:str,table_name:str):
         source_metadata = MetaData()
@@ -277,7 +286,6 @@ class DatabaseBackend:
             conn = active_connection.raw_connection()
             cursor = conn.cursor()
             print(stmt)
-            print(values)
             cursor.executemany(stmt, values)
             cursor.close()
             conn.commit()

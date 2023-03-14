@@ -11,7 +11,7 @@ from sqlalchemy.sql import text
 from psycopg2 import Timestamp
 from sqlalchemy import MetaData
 import pyodbc
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, exc, text
 from sqlalchemy.engine import Engine
 import ibm_db
 import logging
@@ -33,6 +33,40 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
         self.database_module = ibm_db
         self.driver_signature = '{IBM i Access ODBC Driver 64-bit}'
         self.ssl_mode = False
+    
+    def bulk_insert(self, active_connection: Engine,
+                    data: pd.DataFrame,
+                    schema: str,
+                    table_name: str):
+        def extract_values(values):
+            t = []
+            #print('VALUES',values)
+            for x in values:
+                #print(x)
+                if x is None or pd.isna(x):
+                    #print('setting null')
+                    x = None
+                xx = x
+                t.append(xx)
+            return tuple(t)
+        
+        table = f"{schema}.{table_name}"
+        columns = ", ".join(data.columns)
+        values = [extract_values(x) for x in data.values]
+        stmt = f"INSERT INTO {table} ({columns}) VALUES ({', '.join([f'?' for col in data.columns])})"
+        
+        conn = active_connection.raw_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.executemany(stmt, values)
+            cursor.execute('COMMIT;')
+                   
+        except exc.SQLAlchemyError as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()     
+            conn.close()
     
     def table_exists(self,table_name:str,schema:str):
         
@@ -157,7 +191,7 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
         connection = active_connection.raw_connection()
         cursor = connection.cursor()
         total_rows_table_before = self.count_records(cursor,f'{schema}.{table_name}')
-        self.logger.info(f'ROWS IN TARGET: {total_rows_table_before}')
+        #self.logger.info(f'ROWS IN TARGET: {total_rows_table_before}')
 
         def convert_double_precision_to_float(df):
             for col in df.columns:

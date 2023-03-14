@@ -70,6 +70,8 @@ def get_column_type(db_type: str) -> types.TypeEngine:
 
     try:
         new_string = re.sub(r'^VARCHAR\(\d+\)', 'VARCHAR', db_type.upper())
+        new_string = re.sub(r'\(\d+, \d+\)', '', new_string)
+        new_string = re.sub(r'\(\d+,\d+\)', '', new_string)
         return type_map[new_string]
     except KeyError:
         raise ValueError(f'Unsupported data type: {db_type}')

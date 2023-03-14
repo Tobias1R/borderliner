@@ -9,7 +9,6 @@ from sqlalchemy import Table
 from sqlalchemy.sql import text
 from psycopg2 import Timestamp
 from sqlalchemy import MetaData
-import pyodbc
 from . import conn_abstract
 from pandas._libs.lib import infer_dtype
 from sqlalchemy.engine import Engine
@@ -19,12 +18,12 @@ import pandas as pd
 from sqlalchemy import Table
 from sqlalchemy.sql import text
 from sqlalchemy import MetaData
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, exc, text
 from sqlalchemy.engine import Engine
-import mysql.connector
+import MySQLdb
 
 
-class MySQLBackend(conn_abstract.DatabaseBackend):
+class MySqlBackend(conn_abstract.DatabaseBackend):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.interface_name = 'MySQL'
@@ -36,7 +35,7 @@ class MySQLBackend(conn_abstract.DatabaseBackend):
             'database'
         ]
         self.meta = MetaData(bind=self.engine)
-        self.database_module = mysql.connector
+        self.database_module = MySQLdb
         self.driver_signature = ''
         self.ssl_mode = False
 
@@ -75,6 +74,30 @@ class MySQLBackend(conn_abstract.DatabaseBackend):
             return self.engine
         self.engine = create_engine(self.uri)
         return self.engine
+    
+    def bulk_insert(self, active_connection: Engine,
+                    data: pd.DataFrame,
+                    schema: str,
+                    table_name: str):
+        table = f"{schema}.{table_name}"
+        columns = ", ".join(data.columns)
+        values = [self.extract_values(x) for x in data.values]
+        #values = [dict(row) for _, row in data.iterrows()]
+        stmt = f"INSERT INTO {table} ({columns}) VALUES ({', '.join(f'%s' for col in data.columns)})"
+        
+        try:
+            conn = active_connection.raw_connection()
+            cursor = conn.cursor()
+            # print(stmt)
+            # print(values[0])
+            cursor.executemany(stmt, values)
+            cursor.close()
+            conn.commit()
+        except exc.SQLAlchemyError as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
 
     def insert_on_conflict(self, 
             active_connection: Engine, 
@@ -109,7 +132,7 @@ class MySQLBackend(conn_abstract.DatabaseBackend):
                 raise ValueError("conflict_key must be specified when using 'update' conflict action")
             conflict_cols = conflict_key if isinstance(conflict_key, (list, tuple)) else (conflict_key,)
             update_cols = [col for col in df.columns if col not in conflict_cols]
-            update_clause = ', '.join([f"{col}=src.{col}" for col in update_cols])
+            update_clause = ', '.join([f"{col}=VALUES({col})" for col in update_cols])
             conflict_behavior = f"ON DUPLICATE KEY UPDATE {update_clause}"
             key_cols = conflict_key
             if isinstance(conflict_key,list):
@@ -130,21 +153,23 @@ class MySQLBackend(conn_abstract.DatabaseBackend):
             for i in range(0, num_rows, chunk_size):
                 chunk = df.iloc[i:i+chunk_size]
                 # Generate the SQL statement and execute it
-                values_str = ', '.join([str(tuple(x)) for x in chunk.values])
+                values_str = ', '.join(['%s' for x in chunk.columns])
                 column_str = ', '.join(chunk.columns)
+                values = [self.extract_values(x) for x in chunk.values]
                 merge_statement = f"""INSERT INTO {schema}.{table_name} ({column_str}) 
-                            VALUES {values_str} 
+                            VALUES ({values_str}) 
                             ON DUPLICATE KEY UPDATE {update_clause};"""
-                cursor.execute(text(merge_statement))
+                cursor.executemany(merge_statement,values)
                 inserted_rows += cursor.rowcount
                 #updated_rows += len(chunk)-cursor.rowcount
         else:
-            values_str = ', '.join([str(tuple(x)) for x in df.values])
+            values_str = ', '.join(['%s' for x in df.columns])
             column_str = ', '.join(df.columns)
+            values = [self.extract_values(x) for x in df.values]
             merge_statement = f"""INSERT INTO {schema}.{table_name} ({column_str}) 
-                        VALUES {values_str} 
+                        VALUES ({values_str}) 
                         ON DUPLICATE KEY UPDATE {update_clause};"""
-            cursor.execute(text(merge_statement))
+            cursor.executemany(merge_statement, values)
             inserted_rows = cursor.rowcount
         cursor.execute('COMMIT;')
         total_rows_table_after = self.count_records(cursor,f'{schema}.{table_name}')
@@ -155,3 +180,5 @@ class MySQLBackend(conn_abstract.DatabaseBackend):
         if inserted_rows_temp == 0:
             updated_rows = inserted_rows
         self.execution_metrics['updated_rows'] += updated_rows
+
+Connection = MySqlBackend

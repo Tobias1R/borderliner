@@ -1,7 +1,6 @@
 from setuptools import setup, find_packages
 import os
 import subprocess
-
 # Return the git revision as a string
 def git_version():
     def _minimal_ext_cmd(cmd):
