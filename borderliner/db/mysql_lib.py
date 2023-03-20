@@ -43,7 +43,7 @@ class MySqlBackend(conn_abstract.DatabaseBackend):
         try:
             conn = self.engine.raw_connection()
             cursor = conn.cursor()
-            query = f"SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_NAME = '{table_name}' AND TABLE_SCHEMA = '{schema}'"
+            query = f"SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_NAME = '{table_name}'"
             cursor.execute(query)
             exists = cursor.fetchone()[0] == table_name
             cursor.close()
@@ -111,7 +111,6 @@ class MySqlBackend(conn_abstract.DatabaseBackend):
         target_table = Table(
             table_name,
             self.meta,
-            schema=schema,
             autoload=True,
             autoload_with=active_connection
         )
@@ -147,7 +146,7 @@ class MySqlBackend(conn_abstract.DatabaseBackend):
         chunk_size = max_rows
         connection = active_connection.raw_connection()
         cursor = connection.cursor()
-        total_rows_table_before = self.count_records(cursor,f'{schema}.{table_name}')
+        total_rows_table_before = self.count_records(cursor,f'{table_name}')
         self.logger.info(f'ROWS IN TARGET: {total_rows_table_before}')
         if len(df) > max_rows:
             for i in range(0, num_rows, chunk_size):
@@ -156,7 +155,7 @@ class MySqlBackend(conn_abstract.DatabaseBackend):
                 values_str = ', '.join(['%s' for x in chunk.columns])
                 column_str = ', '.join(chunk.columns)
                 values = [self.extract_values(x) for x in chunk.values]
-                merge_statement = f"""INSERT INTO {schema}.{table_name} ({column_str}) 
+                merge_statement = f"""INSERT INTO {table_name} ({column_str}) 
                             VALUES ({values_str}) 
                             ON DUPLICATE KEY UPDATE {update_clause};"""
                 cursor.executemany(merge_statement,values)
@@ -166,13 +165,13 @@ class MySqlBackend(conn_abstract.DatabaseBackend):
             values_str = ', '.join(['%s' for x in df.columns])
             column_str = ', '.join(df.columns)
             values = [self.extract_values(x) for x in df.values]
-            merge_statement = f"""INSERT INTO {schema}.{table_name} ({column_str}) 
+            merge_statement = f"""INSERT INTO {table_name} ({column_str}) 
                         VALUES ({values_str}) 
                         ON DUPLICATE KEY UPDATE {update_clause};"""
             cursor.executemany(merge_statement, values)
             inserted_rows = cursor.rowcount
         cursor.execute('COMMIT;')
-        total_rows_table_after = self.count_records(cursor,f'{schema}.{table_name}')
+        total_rows_table_after = self.count_records(cursor,f'{table_name}')
         cursor.close()
         connection.close()
         inserted_rows_temp = total_rows_table_before - total_rows_table_after
