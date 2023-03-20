@@ -5,5 +5,5 @@ __all__ = [
     'sources',
     'targets'
 ]
-__version__ = '0.0.1'
+__version__ = '0.1.1'
 print(f'loading framework v{__version__}')
