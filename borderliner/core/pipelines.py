@@ -398,7 +398,8 @@ class Pipeline:
                             self.target.backend.create_table = True
                             self.target.create_table(source_schema)
                         else:
-                            self.logger.info(f'The table {schema}.{table_name} exists.')
+                            str_schema=schema+'.' if schema else ''
+                            self.logger.info(f'The table {str_schema}{table_name} exists.')
                     return
                 case 'FILE':
                     self.target = PipelineTargetFlatFile(

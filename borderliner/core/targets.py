@@ -11,6 +11,7 @@ from borderliner.db.conn_abstract import DatabaseBackend
 from borderliner.db.postgres_lib import PostgresBackend
 from borderliner.db.redshift_lib import RedshiftBackend
 from borderliner.db.ibm_db2_lib import IbmDB2Backend
+from borderliner.db.mysql_lib import MySqlBackend
 from borderliner.db.dbutils import get_column_type
 # logging
 from borderliner.core.logs import get_logger
@@ -147,7 +148,6 @@ class PipelineTarget:
             elif db_type == 'IBMDB2':
                 backend_class = IbmDB2Backend
             elif db_type == 'MYSQL':
-                from borderliner.db.mysql_lib import MySqlBackend
                 backend_class = MySqlBackend
         
         self.backend = backend_class(
@@ -279,7 +279,7 @@ class PipelineTargetDatabase(PipelineTarget):
             self.backend.insert_on_conflict(
                 self.engine,
                 self._data,
-                self.config['schema'],
+                self.config.get('schema',None),
                 self.config['table'],
                 if_exists='append',
                 conflict_action=self.config.get('conflict_action',None),

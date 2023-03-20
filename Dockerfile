@@ -9,8 +9,8 @@ RUN apt-get update && apt-get install -y \
     unixodbc \
     libpq-dev \
     netcat \
-    g++ git unzip libxml2 apt-transport-https ca-certificates lsb-release
-
+    g++ git unzip libxml2 apt-transport-https ca-certificates lsb-release \
+    default-libmysqlclient-dev build-essential
 # AZURE CLI
 # RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
@@ -57,8 +57,5 @@ RUN pip install -r /requirements.txt
 # Run the bash script
 RUN chmod +x /usr/local/bin/setup_borderliner.sh && /usr/local/bin/setup_borderliner.sh
 RUN chmod +x /usr/local/bin/dockerrun.sh 
-
-
-
 
 CMD ["dockerrun.sh"]
