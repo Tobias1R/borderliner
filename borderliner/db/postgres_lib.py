@@ -58,7 +58,7 @@ class PostgresBackend(conn_abstract.DatabaseBackend):
             cur.close()
             conn.close()
             return exists
-        except psycopg2.Error as e:
+        except:
             return False
         #In this code, you first establish a connection to the PostgreSQL database using the psycopg2 library. Then, you execute a SQL query to check if the specified table
 
