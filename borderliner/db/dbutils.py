@@ -29,7 +29,6 @@ def column_ddl(col_info):
 
 def get_column_type(db_type: str) -> types.TypeEngine:
     type_map = {
-        'VARCHAR': types.String,
         'NVARCHAR': types.String,
         'TEXT': types.Text,
         'INTEGER': types.Integer,
@@ -69,7 +68,7 @@ def get_column_type(db_type: str) -> types.TypeEngine:
     }
 
     try:
-        new_string = re.sub(r'^VARCHAR\(\d+\)', 'VARCHAR', db_type.upper())
+        new_string = re.sub(r'.*CHAR\(\d+\)', 'CHAR', db_type.upper())
         new_string = re.sub(r'\(\d+, \d+\)', '', new_string)
         new_string = re.sub(r'\(\d+,\d+\)', '', new_string)
         return type_map[new_string]
