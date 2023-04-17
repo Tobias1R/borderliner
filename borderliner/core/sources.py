@@ -257,6 +257,7 @@ class PipelineSourceDatabase(PipelineSource):
             return
         
         if self.chunk_size > 0: 
+            self.logger.info(f'Extracting chunk size: {self.chunk_size}')
             data = pandas.read_sql_query(
                 self.get_query('extract'),
                 self.engine,
