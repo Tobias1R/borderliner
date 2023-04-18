@@ -210,6 +210,16 @@ class PipelineSourceDatabase(PipelineSource):
     def populate_deltas(self):
         pass
 
+    def df_to_parquet(self, df:pandas.DataFrame,filename):
+        if self.control_columns_function:
+            df = self.control_columns_function(df) 
+        df.to_parquet(
+                    filename,
+                    index=False
+                )
+        self.metrics['total_rows'] += len(df)
+        self.csv_chunks_files.append(filename)
+
     def populate_iteration_list(self):
         df = pandas.read_sql_query(
             self.queries['iterate'],
@@ -229,21 +239,41 @@ class PipelineSourceDatabase(PipelineSource):
             query = self.queries['extract'].format(
                 **item
             )
-            data = pandas.read_sql_query(query,self.engine)
+            if self.config.get('use_pyarrow',False):
+                if self.chunk_size <= 0:
+                    self.chunk_size = 100000
+                # create a dataset from the SQL table
+                self.logger.info(f'Extracting using Apache arrow: {self.chunk_size}')
+                data = ds.dataset(
+                    f'{self.backend.uri}::{query}',
+                    format='sql',
+                    batch_size=self.chunk_size
+                )
+            else:
+                data = pandas.read_sql_query(query,self.engine)
             self.metrics['total_rows'] += len(data)
             if self.kwargs.get('dump_data_csv',False):
-                filename_csv = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.csv' 
-                filename_parquet = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
-                if self.control_columns_function:
-                    data = self.control_columns_function(data)     
-                #if self.kwargs.get('dump_data_csv',False)  == 'CSV':  
-                filename = filename_parquet      
-                data.to_parquet(
-                    filename_parquet,
-                    index=False
-                )
-                self.csv_chunks_files.append(filename)
-                #self._data.append(data)
+                if self.config.get('use_pyarrow',False):                    
+                    for batch in data.to_batches():                        
+                        filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
+                        df = batch.to_pandas()                                        
+                        self.df_to_parquet(df,filename)                        
+                        slice_index += 1 
+                else:
+                    filename_csv = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.csv' 
+                    filename_parquet = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
+                    df = data
+                    # if self.control_columns_function:
+                    #     data = self.control_columns_function(data)     
+                    # #if self.kwargs.get('dump_data_csv',False)  == 'CSV':  
+                    # filename = filename_parquet      
+                    # data.to_parquet(
+                    #     filename_parquet,
+                    #     index=False
+                    # )
+                    # self.csv_chunks_files.append(filename)
+                    # #self._data.append(data)
+                    self.df_to_parquet(df,filename_parquet)
             else:
                 self._data.append(data)
             slice_index += 1
@@ -259,15 +289,7 @@ class PipelineSourceDatabase(PipelineSource):
             return
         
         if self.chunk_size > 0: 
-            def df_to_parquet(df:pandas.DataFrame,filename):
-                if self.control_columns_function:
-                    df = self.control_columns_function(df) 
-                df.to_parquet(
-                            filename,
-                            index=False
-                        )
-                self.metrics['total_rows'] += len(df)
-                self.csv_chunks_files.append(filename)
+            
 
             if self.config.get('use_pyarrow',False):
                 # create a dataset from the SQL table
@@ -295,12 +317,12 @@ class PipelineSourceDatabase(PipelineSource):
                     for batch in data.to_batches():                        
                         filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
                         df = batch.to_pandas()                                        
-                        df_to_parquet(df,filename)                        
+                        self.df_to_parquet(df,filename)                        
                         slice_index += 1                        
                 else:
                     for df in data:                        
                         filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
-                        df_to_parquet(df,filename)                        
+                        self.df_to_parquet(df,filename)                        
                         slice_index += 1
                         
             else:
