@@ -4,6 +4,8 @@ import os
 import pandas
 import logging
 import sys
+import pyarrow.dataset as ds
+import pyarrow.parquet as pq
 
 from borderliner.db.conn_abstract import DatabaseBackend
 from borderliner.cloud import CloudEnvironment
@@ -257,26 +259,49 @@ class PipelineSourceDatabase(PipelineSource):
             return
         
         if self.chunk_size > 0: 
-            self.logger.info(f'Extracting chunk size: {self.chunk_size}')
-            data = pandas.read_sql_query(
-                self.get_query('extract'),
-                self.engine,
-                chunksize=self.chunk_size)
-            
-            slice_index = 1
+            def df_to_parquet(df:pandas.DataFrame,filename):
+                if self.control_columns_function:
+                    df = self.control_columns_function(df) 
+                df.to_parquet(
+                            filename,
+                            index=False
+                        )
+                self.metrics['total_rows'] += len(df)
+                self.csv_chunks_files.append(filename)
+
+            if self.config.get('use_pyarrow',False):
+                # create a dataset from the SQL table
+                query = self.get_query('extract')
+                data = ds.dataset(
+                    f'{self.backend.uri}::{query}',
+                    format='sql',
+                    batch_size=self.chunk_size
+                )
+
+                # create a scanner to read the data in batches
+                scanner = data.scanner()
+            else:
+                self.logger.info(f'Extracting chunk size: {self.chunk_size}')
+                data = pandas.read_sql_query(
+                    self.get_query('extract'),
+                    self.engine,
+                    chunksize=self.chunk_size)
+                
+                slice_index = 1
             if self.kwargs.get('dump_data_csv',False):
-                for df in data:
-                    
-                    filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
-                    if self.control_columns_function:
-                        df = self.control_columns_function(df)                 
-                    df.to_parquet(
-                        filename,
-                        index=False
-                    )
-                    self.csv_chunks_files.append(filename)
-                    slice_index += 1
-                    self.metrics['total_rows'] += len(df)
+                if self.config.get('use_pyarrow',False):
+                    # write the dataset to Parquet files in chunks                    
+                    for batch in data.to_batches():                        
+                        filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
+                        df = batch.to_pandas()                                        
+                        df_to_parquet(df,filename)                        
+                        slice_index += 1                        
+                else:
+                    for df in data:                        
+                        filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
+                        df_to_parquet(df,filename)                        
+                        slice_index += 1
+                        
             else:
                 self._data = data
         else:
