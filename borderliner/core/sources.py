@@ -8,6 +8,7 @@ import sys
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 from pyarrow import Table, Schema
+import pyarrow as pa
 
 from borderliner.db.conn_abstract import DatabaseBackend
 from borderliner.cloud import CloudEnvironment
@@ -246,11 +247,13 @@ class PipelineSourceDatabase(PipelineSource):
                     self.chunk_size = 100000
                 # create a dataset from the SQL table
                 self.logger.info(f'Extracting using Apache Arrow: {self.chunk_size}')
+                connection = self.backend.get_connection()
                 data = ds.dataset(
                     f'{self.backend.uri}::{query}',
-                    format='jdbc'
-                )
-                
+                    schema=pa.schema(connection.cursor().description),
+                    format='arrow',
+                    partitioning='hive'
+                )               
                 
                 for batch in data.to_batches(max_chunksize=self.chunk_size):
                     # convert the batch to a pandas dataframe
