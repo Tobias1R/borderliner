@@ -248,10 +248,10 @@ class PipelineSourceDatabase(PipelineSource):
                 self.logger.info(f'Extracting using Apache Arrow: {self.chunk_size}')
                 data = ds.dataset(
                     f'{self.backend.uri}::{query}',
-                    format='sql'
+                    format='jdbc'
                 )
-                writer = None
-                num_rows = 0
+                
+                
                 for batch in data.to_batches(max_chunksize=self.chunk_size):
                     # convert the batch to a pandas dataframe
                     df = batch.to_pandas()
@@ -262,20 +262,11 @@ class PipelineSourceDatabase(PipelineSource):
 
                     # write the data to a Parquet file
                     filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
-                    if writer is None:
-                        schema = Schema.from_pandas(df)
-                        writer = pq.ParquetWriter(filename, schema)
-                    table = Table.from_pandas(df, schema=schema)
-                    writer.write_table(table)
-                    num_rows += len(df)
+                    self.df_to_parquet(df,filename)   
+                    
 
                     # increment the slice index
                     slice_index += 1
-
-                # close the Parquet writer and update the metrics
-                writer.close()
-                self.metrics['total_rows'] += num_rows
-
             else:
                 data = pandas.read_sql_query(query, self.engine)
                 self.metrics['total_rows'] += len(data)
