@@ -247,7 +247,7 @@ class PipelineSourceDatabase(PipelineSource):
                     self.chunk_size = 100000
                 # create a dataset from the SQL table
                 self.logger.info(f'Extracting using Apache Arrow: {self.chunk_size}')
-                connection = self.backend.get_connection()
+                connection = self.backend.get_engine().raw_connection()
                 data = ds.dataset(
                     f'{self.backend.uri}::{query}',
                     schema=pa.schema(connection.cursor().description),
