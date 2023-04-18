@@ -4,8 +4,10 @@ import os
 import pandas
 import logging
 import sys
+# APACHE ARROW
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
+from pyarrow import Table, Schema
 
 from borderliner.db.conn_abstract import DatabaseBackend
 from borderliner.cloud import CloudEnvironment
@@ -221,6 +223,81 @@ class PipelineSourceDatabase(PipelineSource):
         self.csv_chunks_files.append(filename)
 
     def populate_iteration_list(self):
+        df = pandas.read_sql_query(
+            self.queries['iterate'],
+            self.engine
+        )
+
+        total_cols = int(df.shape[1])
+        self._data = []
+        for col in df.columns:
+            df[col] = df[col].astype(str)
+
+        df = df.to_dict(orient='records')
+        slice_index = 1
+        for item in df:
+            self.logger.info(f'Extract by iteration: {item}')
+            query = self.queries['extract'].format(
+                **item
+            )
+
+            if self.config.get('use_pyarrow', False):
+                if self.chunk_size <= 0:
+                    self.chunk_size = 100000
+                # create a dataset from the SQL table
+                self.logger.info(f'Extracting using Apache Arrow: {self.chunk_size}')
+                data = ds.dataset(
+                    f'{self.backend.uri}::{query}',
+                    format='sql'
+                )
+                writer = None
+                num_rows = 0
+                for batch in data.to_batches(max_chunksize=self.chunk_size):
+                    # convert the batch to a pandas dataframe
+                    df = batch.to_pandas()
+
+                    # apply any necessary transformations to the dataframe
+                    if self.control_columns_function:
+                        df = self.control_columns_function(df)
+
+                    # write the data to a Parquet file
+                    filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
+                    if writer is None:
+                        schema = Schema.from_pandas(df)
+                        writer = pq.ParquetWriter(filename, schema)
+                    table = Table.from_pandas(df, schema=schema)
+                    writer.write_table(table)
+                    num_rows += len(df)
+
+                    # increment the slice index
+                    slice_index += 1
+
+                # close the Parquet writer and update the metrics
+                writer.close()
+                self.metrics['total_rows'] += num_rows
+
+            else:
+                data = pandas.read_sql_query(query, self.engine)
+                self.metrics['total_rows'] += len(data)
+
+                if self.kwargs.get('dump_data_csv', False):
+                    filename_csv = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.csv'
+                    filename_parquet = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
+                    if self.control_columns_function:
+                        data = self.control_columns_function(data)
+                    if self.kwargs.get('dump_data_csv', False) == 'CSV':
+                        filename = filename_csv
+                        data.to_csv(filename_csv, index=False)
+                    else:
+                        filename = filename_parquet
+                        data.to_parquet(filename_parquet, index=False)
+                    self.csv_chunks_files.append(filename)
+                else:
+                    self._data.append(data)
+
+                slice_index += 1
+
+    def populate_iteration_list_BKP(self):
         df = pandas.read_sql_query(
             self.queries['iterate'],
             self.engine
