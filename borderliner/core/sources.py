@@ -271,6 +271,7 @@ class PipelineSourceDatabase(PipelineSource):
 
             if self.config.get('use_pyarrow',False):
                 # create a dataset from the SQL table
+                self.logger.info(f'Extracting using Apache arrow: {self.chunk_size}')
                 query = self.get_query('extract')
                 data = ds.dataset(
                     f'{self.backend.uri}::{query}',
