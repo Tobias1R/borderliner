@@ -175,11 +175,11 @@ class DatabaseBackend:
 
 
     def get_engine(self,*args,**kwargs)->Engine:
-        if isinstance(self.engine,Engine):
-            return self.engine
+        # if isinstance(self.engine,Engine):
+        #     return self.engine
         self.engine = create_engine(self.uri,connect_args={'sslmode': self.ssl_mode},*args,**kwargs)
-        self.session = sessionmaker(bind=self.engine)()
-        setup_session_tracking(self.session)
+        # self.session = sessionmaker(bind=self.engine)()
+        # setup_session_tracking(self.session)
         return self.engine
 
     def record_exists(self,*args,**kwargs)->bool:

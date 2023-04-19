@@ -223,7 +223,7 @@ class PipelineSourceDatabase(PipelineSource):
         self.metrics['total_rows'] += len(df)
         self.csv_chunks_files.append(filename)
 
-    def populate_iteration_list(self):
+    def populate_iteration_listARROW(self):
         df = pandas.read_sql_query(
             self.queries['iterate'],
             self.engine
@@ -291,7 +291,7 @@ class PipelineSourceDatabase(PipelineSource):
 
                 slice_index += 1
 
-    def populate_iteration_list_BKP(self):
+    def populate_iteration_list(self):
         df = pandas.read_sql_query(
             self.queries['iterate'],
             self.engine
@@ -310,41 +310,25 @@ class PipelineSourceDatabase(PipelineSource):
             query = self.queries['extract'].format(
                 **item
             )
-            if self.config.get('use_pyarrow',False):
-                if self.chunk_size <= 0:
-                    self.chunk_size = 100000
-                # create a dataset from the SQL table
-                self.logger.info(f'Extracting using Apache arrow: {self.chunk_size}')
-                data = ds.dataset(
-                    f'{self.backend.uri}::{query}',
-                    format='sql',
-                    batch_size=self.chunk_size
-                )
-            else:
-                data = pandas.read_sql_query(query,self.engine)
-            self.metrics['total_rows'] += len(data)
+            if self.chunk_size <= 0:
+                self.chunk_size = 100000
+            data = pandas.read_sql_query(
+                    query,
+                    self.engine,
+                    chunksize=self.chunk_size)
+            #self.metrics['total_rows'] += len(data)
             if self.kwargs.get('dump_data_csv',False):
-                if self.config.get('use_pyarrow',False):                    
-                    for batch in data.to_batches():                        
-                        filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
-                        df = batch.to_pandas()                                        
-                        self.df_to_parquet(df,filename)                        
-                        slice_index += 1 
-                else:
-                    filename_csv = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.csv' 
-                    filename_parquet = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
+                filename_parquet = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
+                if isinstance(data,pandas.DataFrame):
                     df = data
-                    # if self.control_columns_function:
-                    #     data = self.control_columns_function(data)     
-                    # #if self.kwargs.get('dump_data_csv',False)  == 'CSV':  
-                    # filename = filename_parquet      
-                    # data.to_parquet(
-                    #     filename_parquet,
-                    #     index=False
-                    # )
-                    # self.csv_chunks_files.append(filename)
-                    # #self._data.append(data)
                     self.df_to_parquet(df,filename_parquet)
+                    
+                else:
+                    for df in data:
+                        filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
+                        self.df_to_parquet(df,filename)                        
+                        slice_index += 1
+
             else:
                 self._data.append(data)
             slice_index += 1

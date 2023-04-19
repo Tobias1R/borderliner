@@ -272,6 +272,8 @@ class PipelineTargetDatabase(PipelineTarget):
 
     def _do_upsert(self):
         insmethod='UPSERT'
+        # refresh engine
+        self.engine = self.backend.get_engine()
         if isinstance(self._data,pandas.DataFrame):
             
             total_rows = len(self._data)

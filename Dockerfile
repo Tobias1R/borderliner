@@ -58,4 +58,4 @@ RUN pip install -r /requirements.txt
 RUN chmod +x /usr/local/bin/setup_borderliner.sh && /usr/local/bin/setup_borderliner.sh
 RUN chmod +x /usr/local/bin/dockerrun.sh 
 
-CMD ["dockerrun.sh"]
+#CMD ["dockerrun.sh"]

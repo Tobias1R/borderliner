@@ -116,6 +116,9 @@ class PostgresBackend(conn_abstract.DatabaseBackend):
             connection = active_connection.raw_connection()
             cursor = connection.cursor()
             self.execution_metrics['processed_rows'] += len(df)
+            total_rows_table_before = self.count_records(cursor,f'{schema}.{table_name}')
+            inserted_rows = 0
+            updated_rows = 0
             if if_exists == 'append':
                 for column in df.columns:
                     res = self.column_exists_db(
@@ -135,26 +138,34 @@ class PostgresBackend(conn_abstract.DatabaseBackend):
                     match str(conflict_action).lower():
                         case 'update':
                             try:
-                                for d in data:
-                                    INSERT_SQL = f"""
-                                        WITH t as (
-                                        INSERT INTO {schema}.{table_name} ({col_names})
-                                            VALUES {d}
-                                        ON CONFLICT 
-                                            ({conflict_key}) 
-                                        DO UPDATE SET
-                                            ({conflict_set})=({excluded_set}) RETURNING xmax)
-                                            SELECT COUNT(*) AS all_rows, 
-                                            SUM(CASE WHEN xmax = 0 THEN 1 ELSE 0 END) AS ins, 
-                                            SUM(CASE WHEN xmax::text::int > 0 THEN 1 ELSE 0 END) AS upd 
-                                        FROM t;"""
-                                    
-                                    cursor.execute(INSERT_SQL)
-                                    metrics = cursor.fetchall()
-                                    inserts = metrics[0][1]
-                                    updates = metrics[0][2]
-                                    self.execution_metrics['inserted_rows'] += int(inserts)
-                                    self.execution_metrics['updated_rows'] += int(updates)
+                                #for d in data:
+                                    # INSERT_SQL = f"""
+                                    #     WITH t as (
+                                    #     INSERT INTO {schema}.{table_name} ({col_names})
+                                    #         VALUES {d}
+                                    #     ON CONFLICT 
+                                    #         ({conflict_key}) 
+                                    #     DO UPDATE SET
+                                    #         ({conflict_set})=({excluded_set}) RETURNING xmax)
+                                    #         SELECT COUNT(*) AS all_rows, 
+                                    #         SUM(CASE WHEN xmax = 0 THEN 1 ELSE 0 END) AS ins, 
+                                    #         SUM(CASE WHEN xmax::text::int > 0 THEN 1 ELSE 0 END) AS upd 
+                                    #     FROM t;"""
+                                INSERT_SQL = f"""
+                                    INSERT INTO {schema}.{table_name} ({col_names})
+                                        VALUES ({','.join(['%s'] * len(df.columns))})
+                                        ON CONFLICT ({conflict_key}) DO UPDATE SET ({conflict_set})=({excluded_set})
+                                        ;
+                                """
+                                
+                                #cursor.execute(INSERT_SQL)
+                                cursor.executemany(INSERT_SQL, data)
+                                inserted_rows += cursor.rowcount
+                                # metrics = cursor.fetchall()
+                                # inserts = metrics[0][1]
+                                # updates = metrics[0][2]
+                                # self.execution_metrics['inserted_rows'] += int(inserts)
+                                # self.execution_metrics['updated_rows'] += int(updates)
                                     
                             except Exception as e:
                                 #print(values,INSERT_SQL)
@@ -186,7 +197,13 @@ class PostgresBackend(conn_abstract.DatabaseBackend):
                                     page_size=10000)
                     self.execution_metrics['inserted_rows'] += cursor.rowcount
                 
-                connection.commit()                                
+                connection.commit()       
+                total_rows_table_after = self.count_records(cursor,f'{schema}.{table_name}') 
+                inserted_rows_temp =  total_rows_table_after - total_rows_table_before
+                self.execution_metrics['inserted_rows'] += inserted_rows_temp
+                if inserted_rows_temp == 0:
+                    updated_rows = inserted_rows
+                self.execution_metrics['updated_rows'] += updated_rows                        
                 cursor.close()
                 connection.close()
                 
