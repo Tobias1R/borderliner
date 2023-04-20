@@ -7,6 +7,7 @@ import sys
 from sqlalchemy import MetaData, Table, Column, String, TIMESTAMP, BIGINT
 from sqlalchemy import PrimaryKeyConstraint
 from sqlalchemy import types
+from sqlalchemy.engine import Connection
 from borderliner.db.conn_abstract import DatabaseBackend
 from borderliner.db.postgres_lib import PostgresBackend
 from borderliner.db.redshift_lib import RedshiftBackend
@@ -59,7 +60,15 @@ class PipelineTarget:
 
         self.source_schema = []
 
+        self.active_connection = None
+
         self.configure()
+    
+    def get_active_connection(self):
+        # if isinstance(self.active_connection, Connection):
+        #     return self.active_connection
+        self.active_connection = self.backend.get_engine().raw_connection()
+        return self.active_connection
 
     def replace_env_vars(self,data):
         for key, value in data.items():
@@ -75,44 +84,7 @@ class PipelineTarget:
     
     def configure(self):
         return self.configure_dynamic()
-        db_type = str(self.config['type']).upper()
         
-        self.config = self.replace_env_vars(self.config)
-        self.user = self.config.get('username',None)
-        self.password = self.config.get('password',None)
-        self.host = self.config.get('host',None)
-        self.port = self.config.get('port',None)
-        
-        match db_type:
-            case 'POSTGRES':
-                self.backend = PostgresBackend(
-                    host=self.host,
-                    database=self.config['database'],
-                    user=self.user,
-                    password=self.password,
-                    port=self.port
-                )
-            case 'REDSHIFT':
-                self.backend = RedshiftBackend(
-                    host=self.host,
-                    database=self.config['database'],
-                    user=self.user,
-                    password=self.password,
-                    port=self.port,
-                    staging_schema=self.config.get('staging_schema','staging'),
-                    staging_table=self.config.get('staging_table',None)
-                )
-            case 'IBMDB2':
-                self.backend = IbmDB2Backend(
-                    host=self.host,
-                    database=self.config['database'],
-                    user=self.user,
-                    password=self.password,
-                    port=self.port
-                )
-        self.logger.info(f'backend for {db_type} loaded')
-        self.engine = self.backend.get_engine()
-        self.connection = self.backend.get_connection()
     
     def configure_dynamic(self):
         db_type = str(self.config['type']).upper()
@@ -273,13 +245,13 @@ class PipelineTargetDatabase(PipelineTarget):
     def _do_upsert(self):
         insmethod='UPSERT'
         # refresh engine
-        self.engine = self.backend.get_engine()
+        #self.engine = self.backend.get_engine()
         if isinstance(self._data,pandas.DataFrame):
             
             total_rows = len(self._data)
             self.logger.info(f'Insertion Method: {insmethod} for {total_rows} rows')
             self.backend.insert_on_conflict(
-                self.engine,
+                self.active_connection,
                 self._data,
                 self.config.get('schema',None),
                 self.config['table'],
@@ -288,6 +260,9 @@ class PipelineTargetDatabase(PipelineTarget):
                 conflict_key=self.config.get('conflict_key',None)
             )
         if isinstance(self._data,list):
+            # new connection for loop
+            
+            
             for df in self._data:
                 
                 total_rows = len(df)
@@ -301,6 +276,7 @@ class PipelineTargetDatabase(PipelineTarget):
                     conflict_action='update',
                     conflict_key=self.config['conflict_key']
                 )
+            
 
     def _do_bulk_insert(self):
         insmethod='BULK_INSERT'
@@ -315,16 +291,37 @@ class PipelineTargetDatabase(PipelineTarget):
                 self.config['table']
             )
         if isinstance(self._data,list):
+            connection = self.engine.raw_connection()
             for df in self._data:
                 
                 total_rows = len(df)
                 self.logger.info(f'Insertion Method: {insmethod} for {total_rows} rows')
                 self.backend.bulk_insert(
-                    self.engine,
+                    connection,
                     df,
                     self.config['schema'],
                     self.config['table']
                 )
+            connection.close()
+    
+    def load(self,data:pandas.DataFrame|list):
+        if self.dump_data_csv:
+            self.csv_chunks_files = list(set(self.csv_chunks_files))
+            self.csv_chunks_files.sort()
+            self.logger.info('Creating a new connection for loop.')
+            self.active_connection = self.get_active_connection()
+            #self.active_connection.connect()
+            for filename in self.csv_chunks_files:
+                self.logger.info(f'reading parquet {filename}')
+                df = pandas.read_parquet(filename)
+                self._data=df
+                self.save_data()
+            self.active_connection.close()
+        else:
+            self._data=data
+            self.save_data()
+        if self.backend:
+            self.metrics = self.backend.execution_metrics
 
     def save_data(self):
         insmethod = self.config.get('insertion_method','UPSERT')

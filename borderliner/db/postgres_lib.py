@@ -112,9 +112,14 @@ class PostgresBackend(conn_abstract.DatabaseBackend):
         """
         Process method to insert dataframes in database target.
         """
-        try:
+        if isinstance(active_connection,Engine):
             connection = active_connection.raw_connection()
-            cursor = connection.cursor()
+        else:
+            connection = active_connection
+        cursor = connection.cursor()
+        cursor.execute('BEGIN;')
+        try:
+            
             self.execution_metrics['processed_rows'] += len(df)
             total_rows_table_before = self.count_records(cursor,f'{schema}.{table_name}')
             inserted_rows = 0
@@ -122,7 +127,7 @@ class PostgresBackend(conn_abstract.DatabaseBackend):
             if if_exists == 'append':
                 for column in df.columns:
                     res = self.column_exists_db(
-                        active_connection,
+                        self.engine,
                         table_name, 
                         column, 
                         infer_dtype(df[column]))
@@ -196,17 +201,22 @@ class PostgresBackend(conn_abstract.DatabaseBackend):
                                     template=None, 
                                     page_size=10000)
                     self.execution_metrics['inserted_rows'] += cursor.rowcount
-                
-                connection.commit()       
-                total_rows_table_after = self.count_records(cursor,f'{schema}.{table_name}') 
-                inserted_rows_temp =  total_rows_table_after - total_rows_table_before
-                self.execution_metrics['inserted_rows'] += inserted_rows_temp
-                if inserted_rows_temp == 0:
-                    updated_rows = inserted_rows
-                self.execution_metrics['updated_rows'] += updated_rows                        
-                cursor.close()
-                connection.close()
-                
-        except Exception as e:            
+            
+            cursor.execute('COMMIT;')
+            #connection.commit()       
+            total_rows_table_after = self.count_records(cursor,f'{schema}.{table_name}') 
+            inserted_rows_temp =  total_rows_table_after - total_rows_table_before
+            self.execution_metrics['inserted_rows'] += inserted_rows_temp
+            if inserted_rows_temp == 0:
+                updated_rows = inserted_rows
+            self.execution_metrics['updated_rows'] += updated_rows     
+
+        except Exception as e:  
+            cursor.execute('ROLLBACK;') 
+            cursor.close()
+            connection.close()         
             raise Exception('db exception:'+str(e))
+        cursor.close()
+        #connection.close()
+        
 Connection = PostgresBackend

@@ -188,7 +188,10 @@ class IbmDB2Backend(conn_abstract.DatabaseBackend):
         max_rows = 10000
         num_rows = len(df)
         chunk_size = max_rows
-        connection = active_connection.raw_connection()
+        if isinstance(active_connection,Engine):
+            connection = active_connection.raw_connection()
+        else:
+            connection = active_connection
         cursor = connection.cursor()
         total_rows_table_before = self.count_records(cursor,f'{schema}.{table_name}')
         #self.logger.info(f'ROWS IN TARGET: {total_rows_table_before}')

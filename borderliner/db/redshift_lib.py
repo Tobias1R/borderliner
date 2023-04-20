@@ -111,7 +111,10 @@ class RedshiftBackend(conn_abstract.DatabaseBackend):
         Process method to insert dataframes in database target.
         """
         try:
-            connection = active_connection.raw_connection()
+            if isinstance(active_connection,Engine):
+                connection = active_connection.raw_connection()
+            else:
+                connection = active_connection
             cursor = connection.cursor()
             self.execution_metrics['processed_rows'] += len(df)
             truncate_staging_statement = f'TRUNCATE TABLE {self.staging_schema}.{self.staging_table};'
