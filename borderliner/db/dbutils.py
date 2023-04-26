@@ -1,5 +1,30 @@
 import re
-from sqlalchemy import types
+from sqlalchemy import (
+    create_engine, 
+    MetaData, 
+    Table, 
+    Column, 
+    Integer, 
+    String, 
+    UniqueConstraint,
+    types
+)
+
+def add_unique_constraint(table_name, constraint_fields, engine):
+    # create the metadata and reflect the existing table
+    metadata = MetaData(bind=engine)
+    metadata.reflect()
+    table = metadata.tables[table_name]
+    
+    # create the unique constraint expression
+    fields = [getattr(table.c, field) for field in constraint_fields]
+    unique_constraint = UniqueConstraint(*fields, name=f'uq_{table_name}_{"_".join(constraint_fields)}')
+    
+    # generate the SQL statement and execute it
+    sql_statement = str(unique_constraint.compile(dialect=engine.dialect))
+    with engine.connect() as conn:
+        conn.execute(sql_statement)
+
 db2_to_postgres = {
     'SMALLINT': 'SMALLINT',
     'INTEGER': 'INTEGER',

@@ -143,35 +143,15 @@ class PostgresBackend(conn_abstract.DatabaseBackend):
                     match str(conflict_action).lower():
                         case 'update':
                             try:
-                                #for d in data:
-                                    # INSERT_SQL = f"""
-                                    #     WITH t as (
-                                    #     INSERT INTO {schema}.{table_name} ({col_names})
-                                    #         VALUES {d}
-                                    #     ON CONFLICT 
-                                    #         ({conflict_key}) 
-                                    #     DO UPDATE SET
-                                    #         ({conflict_set})=({excluded_set}) RETURNING xmax)
-                                    #         SELECT COUNT(*) AS all_rows, 
-                                    #         SUM(CASE WHEN xmax = 0 THEN 1 ELSE 0 END) AS ins, 
-                                    #         SUM(CASE WHEN xmax::text::int > 0 THEN 1 ELSE 0 END) AS upd 
-                                    #     FROM t;"""
                                 INSERT_SQL = f"""
                                     INSERT INTO {schema}.{table_name} ({col_names})
                                         VALUES ({','.join(['%s'] * len(df.columns))})
                                         ON CONFLICT ({conflict_key}) DO UPDATE SET ({conflict_set})=({excluded_set})
                                         ;
                                 """
-                                
-                                #cursor.execute(INSERT_SQL)
                                 cursor.executemany(INSERT_SQL, data)
                                 inserted_rows += cursor.rowcount
-                                # metrics = cursor.fetchall()
-                                # inserts = metrics[0][1]
-                                # updates = metrics[0][2]
-                                # self.execution_metrics['inserted_rows'] += int(inserts)
-                                # self.execution_metrics['updated_rows'] += int(updates)
-                                    
+                                
                             except Exception as e:
                                 #print(values,INSERT_SQL)
                                 print('EXCEPTION PGLIBS:',e)

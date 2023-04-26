@@ -166,7 +166,7 @@ class DatabaseBackend:
             user=self.user, 
             password=self.password)
     
-    def set_engine(self,*args,**kwargs)->Engine:
+    def set_engine(self,*args,**kwargs)->None:
         engine = create_engine(self.uri,*args,**kwargs)
         session = sessionmaker(bind=engine)()
         setup_session_tracking(session)
