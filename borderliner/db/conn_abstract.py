@@ -1,3 +1,4 @@
+import math
 from typing import Any
 from sqlalchemy.engine import Engine
 import psycopg2
@@ -57,6 +58,7 @@ class QueryStats(object):
 
 class DatabaseBackend:
     def __init__(self,*args,**kwargs):
+        self.kwargs = kwargs
         self.interface_name = 'iface'
         self.expected_connection_args = [
                 'host',
@@ -88,6 +90,8 @@ class DatabaseBackend:
             }
         #self.set_engine()
         self.create_table = False
+        # Define if the count of rows should be used for metrics
+        self.use_count_for_metrics = False
     
     def extract_values(self,values):
         t = []
@@ -153,7 +157,7 @@ class DatabaseBackend:
         s = str(f'{self.alchemy_engine_flag}://{self.user}:{self.password}@{self.host}/{self.database}')
         if self.port:
             s = f'{self.alchemy_engine_flag}://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}'
-        #print('returning ',s)
+        print('DB URI ',s)
         return s
     
     def get_connection(self,*args,**kwargs)->Any:
@@ -187,6 +191,23 @@ class DatabaseBackend:
 
     def collect_metrics(self):
         raise Exception('Your connector does not implement metrics collection system.')
+    
+    def insert_on_conflict_staged(
+        self, 
+        active_connection,
+        df, 
+        schema,
+        table_name,
+        if_exists='append',
+        conflict_key=None,
+        conflict_action=None):
+        """
+        Interface method.
+
+        Every lib should implement this method in order to execute insert
+        statement with conflict option.
+        """
+        logger.critical(f'your database lib does not implement insert_on_conflict_staged method')
     
 
     def insert_on_conflict(
@@ -274,19 +295,43 @@ class DatabaseBackend:
         self.execution_metrics['inserted_rows'] += p_cursor.row_count
 
     def bulk_insert(self, active_connection: Engine,
-                    data: pandas.DataFrame,
+                    df: pandas.DataFrame,
                     schema: str,
                     table_name: str):
         table = f"{schema}.{table_name}"
-        columns = ", ".join(data.columns)
-        values = [dict(row) for _, row in data.iterrows()]
-        stmt = f"INSERT INTO {table} ({columns}) VALUES ({', '.join(':' + col for col in data.columns)})"
-        
+        columns = ", ".join(df.columns)
+        data = [tuple(x) for x in df.values]
+        values = [tuple(
+                            None if isinstance(x, float) and math.isnan(x) else x
+                            for x in row
+                        )
+                        for row in data
+                    ]
+         
+        stmt = f"INSERT INTO {table} ({columns}) VALUES ({','.join(['%s'] * len(df.columns))})"
+        conn = active_connection
+        try:
+            cursor = conn
+            cursor.execute('BEGIN;')
+            self.logger.info(f'Inserting data into table {table}')
+            cursor.execute(stmt, values)
+            cursor.execute('COMMIT;')
+            #cursor.close()
+            #conn.commit()
+        except exc.SQLAlchemyError as e:
+            conn.execute('ROLLBACK;')
+            raise e
+        finally:
+            conn.execute('END;')
+    
+    def truncate_table(self, active_connection: Engine, schema: str, table_name: str):
+        table = f"{schema}.{table_name}"
+        stmt = f"TRUNCATE TABLE {table}"
         try:
             conn = active_connection.raw_connection()
             cursor = conn.cursor()
             print(stmt)
-            cursor.executemany(stmt, values)
+            cursor.execute(stmt)
             cursor.close()
             conn.commit()
         except exc.SQLAlchemyError as e:

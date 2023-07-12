@@ -1,3 +1,4 @@
+import json
 import time
 from .pipelines import (
     Pipeline, PipelineConfig
@@ -14,11 +15,28 @@ from datetime import datetime
 
 class IntegrationPipeline(Pipeline):
     def __init__(self, config: PipelineConfig | str, *args, **kwargs) -> None:
+        kwargs['no_source'] = True
+        kwargs['no_target'] = True
         super().__init__(config, *args, **kwargs)
-        self.integration_config:dict = self.config.integration
+        self.integration_config:dict = self._replace_env_keys(self.config.integration)
+        self.raise_on_error = self.integration_config.get('raise_on_error', True)
 
-    def _configure_pipeline(self, *args, **kwargs):
-        pass
+    
+    def _replace_env_keys(self, config: dict) -> dict:
+        for key in config:
+            
+            if isinstance(config[key], dict):
+                
+                config[key] = self._replace_env_keys(config[key])
+            elif isinstance(config[key], str):
+                
+                if str(config[key]).startswith('$ENV_'):
+                    env_key = str(config[key]).replace('$ENV_','')
+                    config[key] = os.getenv(
+                            env_key,
+                            config[key]
+                        )
+        return config
 
     def integrate(self,*args, **kwargs):
         """
@@ -89,23 +107,34 @@ class IntegrationPipeline(Pipeline):
                     raise Exception(f"Could not download file {last_created_file} from local directory {path}: {e}")
 
             return target_file
+        
     def _integrate_ftp(self):
         """
         Transfer files to an FTP server.
         """
-        ftp_config = self.integration_config.get('credentials', {})
+        ftp_config = self._replace_env_keys(self.integration_config.get('credentials', {}))
+        
         ftp = FTP()
-        ftp.connect(host=ftp_config.get('host', ''), port=ftp_config.get('port', 21))
-        ftp.login(user=ftp_config.get('user', ''), passwd=ftp_config.get('password', ''))
-        ftp.cwd(self.integration_config.get('path', ''))
+        ftp.connect(host=ftp_config.get('host'), port=int(ftp_config.get('port',21)))
+        self.logger.info('Connected to FTP server {}.'.format(ftp_config.get('host')))
+        ftp.login(user=ftp_config.get('user'), passwd=ftp_config.get('password'))
+        self.logger.info('Logged in to FTP server {}.'.format(ftp_config.get('host')))
+        remote_path = ftp_config.get('remote_path', False)
+        if remote_path:
+            ftp.cwd(remote_path)
         files = self._get_files_to_transfer()
+        self.logger.info(f'Files to transfer: {files}')
         if self.integration_config.get('method') == 'put':
+            if isinstance(files, str):
+                files = [files]
             for file_path in files:
                 with open(file_path, 'rb') as file:
+                    self.logger.info('Uploading {} to FTP server.'.format(file_path))
                     ftp.storbinary('STOR {}'.format(os.path.basename(file_path)), file)
                     self.logger.info('Uploaded {} to FTP server.'.format(file_path))
         else:
             raise ValueError('Invalid value for method in integration config.')
+        ftp.quit()
 
     def _integrate_sftp(self):
         """
@@ -133,47 +162,117 @@ class IntegrationPipeline(Pipeline):
                     os.remove(file_path)
             else:
                 raise ValueError('Invalid value for method in integration config.')
+    
+    def _get_path_from_xcom(self):
+        xcom_variable = self.integration_config.get('xcom_variable')
+        if xcom_variable is None:
+            raise ValueError('xcom_variable must be specified in integration config.')
+        if str(xcom_variable).strip() == '':
+            return self._get_last_from_path()
+        return [os.getenv(xcom_variable)]
 
     def _get_files_to_transfer(self):
         discover_file = self.integration_config.get('discover_file', 'last_in_path')
         if discover_file == 'last_in_path':
             return [self._get_last_from_path()]
+        elif discover_file == 'path_from_xcom':
+            return self._get_path_from_xcom()
         else:
             raise ValueError('Invalid value for discover_file in integration config.')
     
+    def parse_api_response(self, response,filename=None):
+        # check if is json
+        try:
+            return response.json()
+        except:
+            pass
+        return None
+
     def _integrate_api(self):
         import requests
         import base64
-        api_key = self.integration_config.get('api_key')
-        auth_url = self.integration_config.get('auth_url')
-        token_bearer = self.integration_config.get('token_bearer', 'Bearer')
+        auth_section = self.integration_config.get('auth', {})
+        auth_type = auth_section.get('type', 'basic')
+        auth_response = None
+        token = ''
+        if auth_type == 'basic':
+            user = auth_section.get('username')
+            password = auth_section.get('password')
+            grant_type = auth_section.get('grant_type', 'password')
+            content_type = auth_section.get('content_type', 'application/x-www-form-urlencoded')
+            auth_header = auth_section.get('auth_header', None)
+            auth_method = auth_section.get('auth_method', 'post')
+
+            if grant_type == 'password':
+                auth_payload = f'grant_type={grant_type}&username={user}&password={password}'
+            elif grant_type == 'client_credentials':
+                auth_payload = f'grant_type={grant_type}'
+            else:
+                raise ValueError('Invalid value for grant_type in integration config.')
+            
+            if auth_header:
+                headers = auth_header
+            else:
+                headers = {'Content-Type': content_type}
+            self.logger.info(f'Auth payload: {auth_payload}')
+            self.logger.info(f'Auth headers: {headers}')
+            auth_response = requests.request(
+                method=auth_method,
+                url=auth_section.get('auth_url'),
+                data=auth_payload,
+                headers=headers
+            )
+            print(auth_response)
+            response_json = auth_response.json()
+            token = response_json.get(auth_section.get('token_key', 'access_token'), '')
+            self.logger.info(f'Auth response: {auth_response}')
+            if auth_response.status_code != 200:
+                raise ValueError('Invalid response from auth server.')
+        elif auth_type == 'bearer':
+            auth_response = auth_section.get('token')
+        else:
+            raise ValueError('Invalid value for auth_type in integration config.')
+        
         data = self._get_files_to_transfer()
         url = self.integration_config.get('url')
         method = self.integration_config.get('method', 'post')
-        file_name_key = self.integration_config.get('file_name_key','file_name')
-        file_data_key = self.integration_config.get('file_data_key','file_data')
+        payload_section = self.integration_config.get('payload', {})
+        if isinstance(data, str):
+            data = [data]
+        
+        for filename in data:
+            if os.path.isfile(filename):
+                with open(filename, 'rb') as file:
+                    file_data = file.read()
+                    if payload_section.get('base64', False):
+                        file_data = base64.b64encode(file_data).decode('UTF-8')
+                    payload = payload_section.get('payload', {})
+                    payload.update({
+                        payload_section.get('file_name_key', 'name'): os.path.basename(filename),
+                        payload_section.get('file_data_key', 'file'): file_data
+                    })
+                    payload = json.dumps(payload)
+                    headers = payload_section.get('headers', {})
+                    if auth_type == 'bearer':
+                        headers.update({'Authorization': f'Bearer {response_json.get("access_token", "")}'})
+                    elif auth_type == 'basic':
+                        headers.update({'Authorization': f'{response_json.get("token_type", "Bearer")} {token}'})
+                    self.logger.info(f'Payload: {payload}')
+                    self.logger.info(f'Headers: {headers}')
+                    response = requests.request(
+                        method=method,
+                        url=url,
+                        data=payload,
+                        headers=headers
+                    )
+                    self.response_json = self.parse_api_response(response,filename)
+                    self.logger.info(f'Response: {response.status_code}')
+                    if self.raise_on_error and response.status_code not in [200,201]:
+                        self.logger.error(f'Error: {response.text}')
+                        raise ValueError('Invalid response from server.')
+                    
 
-        # Get token if auth_url is provided
-        if auth_url:
-            user = self.integration_config.get('credential','user')
-            password = self.integration_config.get('password','password')
-            headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-            auth_response = requests.post(auth_url, data=api_key, headers=headers)
-            if auth_response.status_code != 200:
-                raise Exception(f"Authentication failed with status code {auth_response.status_code}: {auth_response.text}")
-            access_token = auth_response.json().get('access_token')
-            headers = {'Authorization': f'{token_bearer} {access_token}'}
-        elif api_key:
-            headers = {'Api-Key': f'{api_key}'}
-        else:
-            raise Exception(f"Either api-key or oauth2 method must be informed.")
 
-        # Send request for each file in data
-        for file_name, file_data in data.items():
-            file_data_base64 = base64.b64encode(file_data).decode('utf-8')            
-            headers.update({'Content-Type': 'application/json'})
-            payload = {file_name_key: file_name, file_data_key: file_data_base64}
-            response = requests.request(method=method, url=url, headers=headers, json=payload)
-            if response.status_code not in [200, 201]:
-                raise Exception(f"API request failed with status code {response.status_code}: {response.text}")
+
+    
         

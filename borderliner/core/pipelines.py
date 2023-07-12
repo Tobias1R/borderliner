@@ -14,16 +14,19 @@ from .sources import (
     PipelineSource,
     PipelineSourceDatabase,
     PipelineSourceApi,
-    PipelineSourceFlatFile
+    PipelineSourceFlatFile,
+    PipelineSourceEMail
 )
 from .targets import (
     PipelineTarget,
     PipelineTargetApi,
     PipelineTargetDatabase,
-    PipelineTargetFlatFile
+    PipelineTargetFlatFile,
+    PipelineTargetReport
     )
 from borderliner.cloud import CloudEnvironment
 from borderliner.cloud.Aws import AwsEnvironment
+from borderliner.cloud.datacenter import DataCenterS3Environment
 
 PIPELINE_TYPE_PROCESS = 'PROCESS_PIPELINE'
 PIPELINE_TYPE_EXTRACT = 'EXTRACT_PIPELINE'
@@ -54,7 +57,8 @@ def set_control_columns(
                     df,
                     ignore=ignore_md5_fields
                 )
-    df[extract_date_label] = str(time.strftime("%Y%m%d%H%M%S"))
+    #df[extract_date_label] = str(time.strftime("%Y%m%d%H%M%S"))
+    df[extract_date_label] = str(time.strftime("%Y-%m-%d %H:%M:%S"))
     return df
 
 class PhaseTracker:
@@ -117,6 +121,9 @@ class PipelineConfig:
         self.storage = {}
         # clear dump files after action
         self.clear_dumps = False
+        self.debug_query = False
+        self.set_xcom = False
+        self.xcom_variable = None
         
         self.alchemy_log_level = 'ERROR'
         try:
@@ -129,14 +136,16 @@ class PipelineConfig:
             except:
                 raise ValueError('Impossible to open config file.')
         
-        
+    
+    def print_config(self):
+        print(self.__dict__)
             
 
     def __getitem__(self, item):
         return self.__getattribute__(item)
 
     def __str__(self):
-        return str(self.__dict__)
+        return 'CONFIG VALUES: '+str(self.__dict__)
 
     def _load_config_from_redshift(self):
         pass
@@ -213,11 +222,16 @@ class Pipeline:
         self.name:str = 'PIPELINE_NAME'
         self.pipeline_type:str = PIPELINE_TYPE_PROCESS
         self.config:PipelineConfig = None
+
+        self.xcom_value = None
         
         
         if isinstance(config,str):
             if os.path.isfile(config):
                 self.config = PipelineConfig(config)
+            else:
+                raise PipelineConfigException(
+                    f"Config file [{config}] not found. Check your manifest! Manifest need a blank line at the end.")
         elif isinstance(self.config,PipelineConfig):
             self.config = config
         else:
@@ -232,6 +246,7 @@ class Pipeline:
         logging.getLogger('sqlalchemy.engine').setLevel(alchemy_log_level)
         self._configure_environment(self.config['cloud'])
 
+        
         self._configure_pipeline(kwargs)
 
         self.logger.info(f'{self.config.pipeline_name} loaded.')
@@ -303,6 +318,64 @@ class Pipeline:
             case 'AWS':
                 self.logger.info(f'loading {service} environment')
                 self.env = AwsEnvironment(config)
+            case 'CLOUDS3':
+                self.logger.info(f'loading {service} environment')
+                self.env = DataCenterS3Environment(config)
+            case 'CLOUD':
+                self.logger.info(f'loading {service} environment')
+                self.env = DataCenterS3Environment(config)
+
+
+    def make_read_connection(self,config:dict=None):
+        # set attribute connection
+        
+        if config == None:
+            raise ValueError('Invalid connection config')
+        
+        src = config
+
+        source = None
+
+        if isinstance(src,dict):
+            match str(src['source_type']).upper():
+                case 'DATABASE':
+                    source = PipelineSourceDatabase(
+                        src,
+                        dump_data_csv=self.config.dump_data_csv,
+                        pipeline_pid=self.pid,
+                        pipeline_name=self.config.pipeline_name,
+                        control_columns_function=self.set_control_columns,
+                        pipeline_config=self.config
+                    )
+                    
+                case 'FILE':
+                    source = PipelineSourceFlatFile(src,
+                        enviroment=self.env,
+                        pipeline_pid=self.pid,
+                        pipeline_name=self.config.pipeline_name,
+                        control_columns_function=self.set_control_columns,
+                        pipeline_config=self.config)
+                    
+                case 'API':
+                    source = PipelineSourceApi(src,
+                        pipeline_name=self.config.pipeline_name,
+                        control_columns_function=self.set_control_columns,
+                        pipeline_config=self.config)
+                    
+                case 'EMAIL':
+                    source = PipelineSourceEMail(src,
+                        pipeline_name=self.config.pipeline_name,
+                        control_columns_function=self.set_control_columns,
+                        pipeline_config=self.config)
+
+        if source == None:            
+            raise ValueError('Unknown data source')
+        
+        # set attribute connection in self
+        return source
+
+
+
     
     def make_source(self,src=None):
         """
@@ -327,33 +400,72 @@ class Pipeline:
         if src == None:
             src = self.config.source
 
-        if isinstance(src,dict):
-            match str(src['source_type']).upper():
+        self.source = self.make_read_connection(src)
+    
+    def make_write_connection(self,config:dict=None):
+
+        if config == None:
+            raise ValueError('Invalid connection config')
+        
+        tgt = config
+        target = None
+        if isinstance(tgt,dict):
+            match str(tgt['target_type']).upper():
                 case 'DATABASE':
-                    self.source = PipelineSourceDatabase(
-                        src,
+                    target = PipelineTargetDatabase(
+                        self.config,
                         dump_data_csv=self.config.dump_data_csv,
                         pipeline_pid=self.pid,
-                        pipeline_name=self.config.pipeline_name,
-                        control_columns_function=self.set_control_columns,
-                        pipeline_config=self.config
-                    )
-                    return
+                        csv_chunks_files=self.source.csv_chunks_files,
+                        control_columns=self.config.generate_control_columns,
+                        control_columns_names=self.get_control_columns_names())
+                    if self.config.create_target_tables:
+                        if self.source is not None:
+                            source_schema = self.source.inspect_source()                            
+                            target.source_schema = source_schema
+                        table_name = tgt.get('table')
+                        schema = tgt.get('schema')
+                        if not target.backend.table_exists(table_name,schema):
+                            self.logger.info(f'The table {schema}.{table_name} will be created.')
+                            target.backend.create_table = True
+                            target.create_table(source_schema)
+                        else:
+                            str_schema=schema+'.' if schema else ''
+                            self.logger.info(f'The table {str_schema}{table_name} exists.')
+                    
                 case 'FILE':
-                    self.source = PipelineSourceFlatFile(src,
-                        enviroment=self.env,
+                    target = PipelineTargetFlatFile(
+                        self.config,
                         pipeline_pid=self.pid,
-                        pipeline_name=self.config.pipeline_name,
-                        control_columns_function=self.set_control_columns,
-                        pipeline_config=self.config)
-                    return
+                        csv_chunks_files=self.source.csv_chunks_files,
+                        control_columns=self.config.generate_control_columns,
+                        control_columns_names=self.get_control_columns_names(),
+                        dump_data_csv=self.config.dump_data_csv,)
+                
                 case 'API':
-                    self.source = PipelineSourceApi(src,
-                        pipeline_name=self.config.pipeline_name,
-                        control_columns_function=self.set_control_columns,
-                        pipeline_config=self.config)
-                    return
-        raise ValueError('Unknown data source')
+                    target = PipelineTargetApi(
+                        self.config,
+                        pipeline_pid=self.pid,
+                        csv_chunks_files=self.source.csv_chunks_files,
+                        control_columns=self.config.generate_control_columns,
+                        control_columns_names=self.get_control_columns_names(),
+                        dump_data_csv=self.config.dump_data_csv,)
+                    
+                case 'REPORT':
+                    target = PipelineTargetReport(
+                        self.config,
+                        dump_data_csv=self.config.dump_data_csv,
+                        pipeline_pid=self.pid,
+                        csv_chunks_files=self.source.csv_chunks_files,
+                        control_columns=self.config.generate_control_columns,
+                        control_columns_names=self.get_control_columns_names(),
+                        environment=self.env)
+
+        if target == None:            
+            raise ValueError('Unknown data target')
+        
+        return target
+
 
     def make_target(self,tgt=None):
         """
@@ -376,55 +488,15 @@ class Pipeline:
         
         else:
             self.logger.info('All right, i won\'t create tables.')
+        
+        self.target = self.make_write_connection(tgt)
 
-        if isinstance(tgt,dict):
-            match str(tgt['target_type']).upper():
-                case 'DATABASE':
-                    self.target = PipelineTargetDatabase(
-                        self.config,
-                        dump_data_csv=self.config.dump_data_csv,
-                        pipeline_pid=self.pid,
-                        csv_chunks_files=self.source.csv_chunks_files,
-                        control_columns=self.config.generate_control_columns,
-                        control_columns_names=self.get_control_columns_names())
-                    if self.config.create_target_tables:
-                        if self.source is not None:
-                            source_schema = self.source.inspect_source()                            
-                            self.target.source_schema = source_schema
-                        table_name = tgt.get('table')
-                        schema = tgt.get('schema')
-                        if not self.target.backend.table_exists(table_name,schema):
-                            self.logger.info(f'The table {schema}.{table_name} will be created.')
-                            self.target.backend.create_table = True
-                            self.target.create_table(source_schema)
-                        else:
-                            str_schema=schema+'.' if schema else ''
-                            self.logger.info(f'The table {str_schema}{table_name} exists.')
-                    return
-                case 'FILE':
-                    self.target = PipelineTargetFlatFile(
-                        self.config,
-                        pipeline_pid=self.pid,
-                        csv_chunks_files=self.source.csv_chunks_files,
-                        control_columns=self.config.generate_control_columns,
-                        control_columns_names=self.get_control_columns_names(),
-                        dump_data_csv=self.config.dump_data_csv,)
-                    return
-                case 'API':
-                    self.target = PipelineTargetApi(
-                        self.config,
-                        pipeline_pid=self.pid,
-                        csv_chunks_files=self.source.csv_chunks_files,
-                        control_columns=self.config.generate_control_columns,
-                        control_columns_names=self.get_control_columns_names(),
-                        dump_data_csv=self.config.dump_data_csv,)
-                    return
-        raise ValueError('Unknown data target')
+        
 
     def find_entry_point(self,*args,**kwargs):
         self.before_run(args,kwargs)
         self.run(args,kwargs)
-        self.after_run(args,kwargs)
+        return self.after_run(args,kwargs)
 
     def run(self,*args,**kwargs):
         pass
@@ -438,13 +510,23 @@ class Pipeline:
         if self.config.dump_data_csv:
             self._clean_csv_chunk_files()
         self.tracker.finish(pid=self.pid,name=self.config.pipeline_name)
+        return self.finish()
         
 
-    def finish(self,name='PIPELINE',pid=0):
-        runtime = round(float(time.time() - self.runtime),2)
-        msg = f"[{pid}]{name} runtime: {runtime} seconds"
-        print(msg)
-        print('-'.join(['-' for x in range(0,70)]))
+    def finish(self):
+        xcom = self.config.xcom_variable
+        
+        if self.xcom_value:
+            print(self.xcom_value)
+            if xcom:
+                self.env.manager.set_variable(xcom,self.xcom_value)
+            return self.xcom_value
+        if self.target:
+            if self.target.xcom_value:
+                print(self.target.xcom_value)
+                if xcom:
+                    self.env.manager.set_variable(xcom,self.target.xcom_value)
+                return self.target.xcom_value
 
     def print_metrics(self):
         if self.source:

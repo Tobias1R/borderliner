@@ -1,6 +1,8 @@
+import base64
 import importlib
 import io
 import os
+import re
 import pandas
 import logging
 import sys
@@ -10,12 +12,73 @@ import pyarrow.parquet as pq
 from pyarrow import Table, Schema
 import pyarrow as pa
 
+import imaplib
+import email
+import email.header
+import email.utils
+import email.mime.multipart
+import email.mime.text
+import email.mime.base
+import email.mime.application
+import email.mime.image
+import email.mime.audio
+import email.mime.message
+import email.mime.audio
+import email.mime.image
+
 from borderliner.db.conn_abstract import DatabaseBackend
 from borderliner.cloud import CloudEnvironment
 
 # logging
 from borderliner.core.logs import get_logger
 logger = get_logger()
+
+def download_email_attachments(email, password, server, port, folder, protocol, attachments):
+    import imaplib
+    import email
+    import os
+    import sys
+    import traceback
+    import re
+    import datetime
+    import email.header
+    import email.utils
+    import email.mime.multipart
+    import email.mime.text
+    import email.mime.base
+    import email.mime.application
+    import email.mime.image
+    import email.mime.audio
+    import email.mime.message
+    import email.mime.audio
+    import email.mime.image
+    
+    if protocol == 'IMAP':
+        mail = imaplib.IMAP4_SSL(server, port)
+    elif protocol == 'POP3':
+        mail = imaplib.POP3_SSL(server, port)
+    else:
+        raise ValueError('Invalid protocol')
+    mail.login(email, password)
+    mail.select(folder)
+    typ, data = mail.search(None, 'ALL')
+    for num in data[0].split():
+        typ, data = mail.fetch(num, '(RFC822)')
+        msg = email.message_from_bytes(data[0][1])
+        for part in msg.walk():
+            if part.get_content_maintype() == 'multipart':
+                continue
+            if part.get('Content-Disposition') is None:
+                continue
+            filename = part.get_filename()
+            if filename is not None:
+                if filename.lower() in attachments:
+                    if not os.path.exists(attachments[filename.lower()]):
+                        fp = open(attachments[filename.lower()], 'wb')
+                        fp.write(part.get_payload(decode=True))
+                        fp.close()
+    mail.close()
+    mail.logout()
 
 class PipelineSource:
     def __init__(self,config:dict,*args,**kwargs) -> None:
@@ -36,6 +99,7 @@ class PipelineSource:
             self.logger.warning('Pipeline source did not received the pipeline_name, using pid.')
         self.pipeline_name = self.pipeline_name.replace(' ','_')
         self.control_columns_function = kwargs.get('control_columns_function',None)
+        self.dynamic_params = {}
     
     def extract(self):
         extracted_rows = self.metrics['total_rows']
@@ -72,6 +136,82 @@ class PipelineSource:
     def inspect_source(self):
         self.logger.info("Inspecting data source")
     
+
+class PipelineSourceEMail(PipelineSource):
+    def __init__(self, config: dict,*args,**kwargs) -> None:
+        super().__init__(config,*args,**kwargs)
+        self.email = config['email']
+        self.password = config['password']
+        self.server = config['server']
+        self.port = config['port']
+        self.folder = config['folder']
+        self.protocol = config['protocol']
+        self.attachments = []
+        self.search_mail = config.get('search_mail','ALL')
+        self.connection = None
+        self.messages = None
+        self.return_data = 'attachments'
+        self.kwargs = kwargs
+        # An object to handle email operations
+        self.mail = None
+        self.configure()
+    
+    def configure(self):
+        pass
+
+    def extract(self):
+        self.logger.info('Extracting data from email')
+        self.mail = imaplib.IMAP4_SSL(self.server, self.port)
+        self.mail.login(self.email, self.password)
+        self.mail.select(self.folder)
+        typ, data = self.mail.search(None, self.search_mail)
+        # create a dataframe to hold the attachment name, the attachment as base64, and the timestamp
+        dataframe = pandas.DataFrame(columns=['attachment_name', 'attachment', 'timestamp'])
+        search_subject_pattern = self.config.get('search_subject_pattern',None)
+        save_path = self.config.get('save_path',None)
+        self.messages = []
+        for num in data[0].split():
+            typ, data = self.mail.fetch(num, '(RFC822)')
+            msg = email.message_from_bytes(data[0][1])
+            if search_subject_pattern:
+                if re.search(search_subject_pattern,msg['Subject']):
+                    self.messages.append(msg)
+                    for part in msg.walk():
+                        if part.get_content_maintype() == 'multipart':
+                            continue
+                        if part.get('Content-Disposition') is None:
+                            continue
+                        filename = part.get_filename().replace(' ','_')
+                        # add path to filename
+                        if save_path:
+                            # create the folder if it does not exist
+                            if not os.path.exists(save_path):
+                                os.makedirs(save_path)
+                            filename = os.path.join(save_path,filename)
+
+                        if filename is not None:
+                            self.logger.info(f'Extracting attachment {filename}')
+                            if not os.path.exists(filename):
+                                fp = open(filename, 'wb')
+                                fp.write(part.get_payload(decode=True))
+                                fp.close()
+                                attachment = part.get_payload(decode=True)
+                                # convert to base64
+                                attachment = base64.b64encode(attachment)
+                                # populate dataframe
+                                dataframe = dataframe.append({'attachment_name': filename,
+                                                            'attachment': attachment,
+                                                            'timestamp': msg['Date']}, ignore_index=True)
+                                self.attachments.append(filename)
+                                
+                            
+        self.mail.close()
+        self.mail.logout()
+        self.logger.info(f'Extracted {len(self.messages)} messages')
+        self._data = dataframe
+        return self._data
+        
+
     
 
 class PipelineSourceDatabase(PipelineSource):
@@ -117,48 +257,12 @@ class PipelineSourceDatabase(PipelineSource):
                 if env_var in os.environ:
                     data[key] = os.environ[env_var]
                 else:
-                    raise ValueError(f"Environment variable {env_var} not found")
+                    raise ValueError(f'Environment variable {value} not found')
         return data
 
     def configure(self):
         return self.configure_dynamic()
-        self.user = self.config['username']
-        self.password = self.config['password']
-        self.host = self.config['host']
-        self.port = self.config['port']
-        match str(self.config['type']).upper():
-            # TODO: dynamically import
-            # i'll leave these dbs as native support.
-            case 'POSTGRES':
-                from borderliner.db.postgres_lib import PostgresBackend
-                self.backend = PostgresBackend(
-                    host=self.host,
-                    database=self.config['database'],
-                    user=self.user,
-                    password=self.password,
-                    port=self.port
-                )
-            case 'REDSHIFT':
-                from borderliner.db.redshift_lib import RedshiftBackend
-                self.backend = RedshiftBackend(
-                    host=self.host,
-                    database=self.config['database'],
-                    user=self.user,
-                    password=self.password,
-                    port=self.port
-                )
-            case 'IBMDB2':
-                from borderliner.db.ibm_db2_lib import IbmDB2Backend
-                self.backend = IbmDB2Backend(
-                    host=self.host,
-                    database=self.config['database'],
-                    user=self.user,
-                    password=self.password,
-                    port=self.port
-                )
-        self.queries = self.config['queries']
-        self.engine = self.backend.get_engine()
-        self.connection = self.backend.get_connection()
+        
     
     def configure_dynamic(self):
         db_type = str(self.config['type']).upper()
@@ -228,7 +332,7 @@ class PipelineSourceDatabase(PipelineSource):
             self.queries['iterate'],
             self.engine
         )
-
+        
         total_cols = int(df.shape[1])
         self._data = []
         for col in df.columns:
@@ -292,10 +396,12 @@ class PipelineSourceDatabase(PipelineSource):
                 slice_index += 1
 
     def populate_iteration_list(self):
+        self.logger.info('Populating iteration list')
         df = pandas.read_sql_query(
             self.queries['iterate'],
             self.engine
         )
+        self.logger.info(f'Extract by iteration: {len(df)} items')
 
         
         total_cols = int(df.shape[1])
@@ -312,22 +418,32 @@ class PipelineSourceDatabase(PipelineSource):
             )
             if self.chunk_size <= 0:
                 self.chunk_size = 100000
+            try:
+                if self.pipeline_config.debug_query:
+                    print(query)
+            except:
+                pass
             data = pandas.read_sql_query(
                     query,
                     self.engine,
                     chunksize=self.chunk_size)
+            
+            
             #self.metrics['total_rows'] += len(data)
             if self.kwargs.get('dump_data_csv',False):
                 filename_parquet = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
                 if isinstance(data,pandas.DataFrame):
                     df = data
-                    self.df_to_parquet(df,filename_parquet)
+                    if len(df) > 0:
+                        self.df_to_parquet(df,filename_parquet)
                     
                 else:
+                    iter_slice = 1
                     for df in data:
-                        filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}.parquet'
-                        self.df_to_parquet(df,filename)                        
-                        slice_index += 1
+                        filename = f'{self.pipeline_name}_slice_{str(slice_index).zfill(5)}_{str(iter_slice).zfill(5)}.parquet'
+                        if len(df) > 0:
+                            self.df_to_parquet(df,filename)                        
+                            iter_slice += 1
 
             else:
                 self._data.append(data)
@@ -383,6 +499,7 @@ class PipelineSourceDatabase(PipelineSource):
             else:
                 self._data = data
         else:
+            print(self.engine)
             data = pandas.read_sql_query(
                 self.get_query('extract'),
                 self.engine)
@@ -400,17 +517,38 @@ class PipelineSourceDatabase(PipelineSource):
             else:    
                 self._data = data
         
-        return super().extract()    
+        return super().extract() 
 
+    def get_dynamic_params(self)->dict:
+        '''
+        Returns a dict with dynamic params.
+        You can override this method to add more params.
+        Returns: {param_name:param_value, ...}
+        '''
+        return self.dynamic_params  
+    
     def get_query(self,query:str='extract'):
-        #print(self.queries)
+        from sqlalchemy import text
+
+        
         if query in self.queries:
             key_params = str(query)+'_params'
-            if key_params in self.queries:
+            params = self.queries.get(key_params,{})
+            
+            # merge with dynamic params
+            params = {**params,**self.get_dynamic_params()}
+            if params:
+                
+                if '%' in self.queries[query]:
+                    return text(self.queries[query].format(
+                        **params
+                    ))
                 return self.queries[query].format(
-                    **self.queries[key_params]
+                    **params
                 )
             else:
+                if '%' in self.queries[query]:
+                    return text(self.queries[query])
                 return self.queries[query]
         
         
@@ -545,41 +683,44 @@ class PipelineSourceFlatFile(PipelineSource):
             else:
                 file_paths = self.env.data_buffers
         
-
-        # Read the file(s) into a pandas DataFrame or list of DataFrames
-        if isinstance(file_paths, str):
-            if file_paths.endswith('.csv'):
-                read_csv_params = self.config.get('read_csv_params', {})
-                self._data = pandas.read_csv(file_paths, **read_csv_params)
-            elif file_paths.endswith('.xlsx'):
-                read_excel_params = self.config.get('read_excel_params', {})
-                self._data = pandas.read_excel(file_paths, **read_excel_params)
+        if self.config.get('parse_files',True):
+            # Read the file(s) into a pandas DataFrame or list of DataFrames
+            if isinstance(file_paths, str):
+                if file_paths.endswith('.csv'):
+                    read_csv_params = self.config.get('read_csv_params', {})
+                    self._data = pandas.read_csv(file_paths, **read_csv_params)
+                elif file_paths.endswith('.xlsx'):
+                    read_excel_params = self.config.get('read_excel_params', {})
+                    self._data = pandas.read_excel(file_paths, **read_excel_params)
+                else:
+                    raise ValueError('File type not supported')
+            elif isinstance(file_paths, list):
+                self._data = []
+                for file_path in file_paths:
+                    if isinstance(file_path, io.BytesIO):
+                        file_path.seek(0) # reset the stream to the beginning
+                        if self.config.get('extension','csv').upper() == 'CSV':
+                            read_csv_params = self.config.get('read_csv_params', {})
+                            df = pandas.read_csv(file_path, **read_csv_params)
+                        elif self.config.get('extension','csv').upper() == 'XLSX':
+                            read_excel_params = self.config.get('read_excel_params', {})
+                            df = pandas.read_excel(file_path, **read_excel_params)
+                        else:
+                            raise ValueError('File type not supported')
+                        self._data.append(df)
+                    elif isinstance(file_path,str):
+                        if file_path.endswith('.csv'):
+                            read_csv_params = self.config.get('read_csv_params', {})
+                            df = pandas.read_csv(file_path, **read_csv_params)
+                        elif file_path.endswith('.xlsx'):
+                            read_excel_params = self.config.get('read_excel_params', {})
+                            df = pandas.read_excel(file_path, **read_excel_params)
+                        else:
+                            raise ValueError('File type not supported')
+                        self._data.append(df)
             else:
-                raise ValueError('File type not supported')
-        elif isinstance(file_paths, list):
-            self._data = []
-            for file_path in file_paths:
-                if isinstance(file_path, io.BytesIO):
-                    file_path.seek(0) # reset the stream to the beginning
-                    if self.config.get('extension','csv').upper() == 'CSV':
-                        read_csv_params = self.config.get('read_csv_params', {})
-                        df = pandas.read_csv(file_path, **read_csv_params)
-                    elif self.config.get('extension','csv').upper() == 'XLSX':
-                        read_excel_params = self.config.get('read_excel_params', {})
-                        df = pandas.read_excel(file_path, **read_excel_params)
-                    else:
-                        raise ValueError('File type not supported')
-                    self._data.append(df)
-                elif isinstance(file_path,str):
-                    if file_path.endswith('.csv'):
-                        read_csv_params = self.config.get('read_csv_params', {})
-                        df = pandas.read_csv(file_path, **read_csv_params)
-                    elif file_path.endswith('.xlsx'):
-                        read_excel_params = self.config.get('read_excel_params', {})
-                        df = pandas.read_excel(file_path, **read_excel_params)
-                    else:
-                        raise ValueError('File type not supported')
-                    self._data.append(df)
+                raise ValueError('Invalid file path(s) in config')
         else:
-            raise ValueError('Invalid file path(s) in config')
+            self.logger.info('not parsing files')
+            self._data = file_paths
 

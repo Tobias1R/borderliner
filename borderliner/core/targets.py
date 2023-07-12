@@ -1,5 +1,6 @@
 
 import importlib
+import io
 import os
 import pandas
 import logging
@@ -13,6 +14,7 @@ from borderliner.db.postgres_lib import PostgresBackend
 from borderliner.db.redshift_lib import RedshiftBackend
 from borderliner.db.ibm_db2_lib import IbmDB2Backend
 from borderliner.db.mysql_lib import MySqlBackend
+from borderliner.db.mssql_lib import MsSqlBackend
 from borderliner.db.dbutils import get_column_type
 # logging
 from borderliner.core.logs import get_logger
@@ -61,6 +63,10 @@ class PipelineTarget:
         self.source_schema = []
 
         self.active_connection = None
+
+        self.xcom_value = None
+
+        self.has_deltas = False
 
         self.configure()
     
@@ -121,6 +127,8 @@ class PipelineTarget:
                 backend_class = IbmDB2Backend
             elif db_type == 'MYSQL':
                 backend_class = MySqlBackend
+            elif db_type == 'MSSQL':
+                backend_class = MsSqlBackend
         
         self.backend = backend_class(
             host=self.host,
@@ -147,6 +155,7 @@ class PipelineTarget:
             for filename in self.csv_chunks_files:
                 self.logger.info(f'reading parquet {filename}')
                 df = pandas.read_parquet(filename)
+                
                 self._data=df
                 self.save_data()
         else:
@@ -158,9 +167,54 @@ class PipelineTarget:
     def save_data(self):
         pass
 
+    def determine_deltas(self)->dict:
+        pass
+
 class PipelineTargetDatabase(PipelineTarget):
     def __init__(self, config: dict,*args,**kwargs) -> None:
         super().__init__(config,*args,**kwargs)
+        self.has_deltas = False
+        if self.config.get('deltas',None):
+            self.has_deltas = True
+
+    def determine_deltas(self)->dict:
+        '''
+        Determine deltas between source and target tables.        
+        '''
+        self.logger.info('Determining deltas between source and target tables.')
+        self.deltas = {}
+        deltas: dict = self.config.get('deltas',{})
+        fields = []
+        if deltas:
+            for key in deltas.keys():
+                delta = deltas[key]
+                delta_type = delta.get('type',None)
+                fn = ''
+                if delta_type == 'max':
+                    fn = 'max'
+                elif delta_type == 'min':
+                    fn = 'min'
+                elif delta_type == 'count':
+                    fn = 'count'
+                elif delta_type == 'sum':
+                    fn = 'sum'
+                elif delta_type == 'avg':
+                    fn = 'avg'
+                elif delta_type == 'distinct':
+                    fn = 'distinct'
+                else:
+                    raise ValueError(f'Invalid delta type {delta_type}')
+                fields.append(f'{fn}({key}) as {delta_type}_{key}')
+
+        if len(fields) == 0:                
+            sql_statement = f'select {",".join(fields)} from {self.config["target_table"]}'
+            self.logger.debug(f'Executing sql statement: {sql_statement}')
+            df = pandas.read_sql(sql_statement,self.engine)
+            self.deltas = df.to_dict(orient='records')[0]
+            self.logger.info(f'Deltas: {self.deltas}')
+            return self.deltas
+        
+        return {}
 
     def use_staging_table(self)->bool|str:
         return self.config.get('staging_schema',False)
@@ -264,18 +318,30 @@ class PipelineTargetDatabase(PipelineTarget):
             
             
             for df in self._data:
-                
                 total_rows = len(df)
                 self.logger.info(f'Insertion Method: {insmethod} for {total_rows} rows')
-                self.backend.insert_on_conflict(
-                    self.engine,
-                    df,
-                    self.config['schema'],
-                    self.config['table'],
-                    if_exists='append',
-                    conflict_action='update',
-                    conflict_key=self.config['conflict_key']
-                )
+                if self.use_staging_table():
+                    self.logger.info('insert on conflict staged')
+                    self.backend.insert_on_conflict_staged(
+                        self.engine,
+                        df,
+                        self.config['schema'],
+                        self.config['table'],
+                        if_exists='append',
+                        conflict_action='update',
+                        conflict_key=self.config['conflict_key']
+                    )
+                else:
+                    self.logger.info('insert on conflict')
+                    self.backend.insert_on_conflict(
+                        self.engine,
+                        df,
+                        self.config['schema'],
+                        self.config['table'],
+                        if_exists='append',
+                        conflict_action='update',
+                        conflict_key=self.config['conflict_key']
+                    )
             
 
     def _do_bulk_insert(self):
@@ -313,7 +379,11 @@ class PipelineTargetDatabase(PipelineTarget):
             #self.active_connection.connect()
             for filename in self.csv_chunks_files:
                 self.logger.info(f'reading parquet {filename}')
-                df = pandas.read_parquet(filename)
+                df = pandas.read_parquet(filename)                
+                # Replace NaN values with None
+                # Replace NaN values with None
+                df.replace({pandas.NA: None,'NaN':None}, inplace=True)
+                
                 self._data=df
                 self.save_data()
             self.active_connection.close()
@@ -322,6 +392,12 @@ class PipelineTargetDatabase(PipelineTarget):
             self.save_data()
         if self.backend:
             self.metrics = self.backend.execution_metrics
+    
+    def _do_full_copy(self):
+        # refresh engine
+        #self.engine = self.backend.get_engine()
+        self.backend.truncate_table(self.engine,self.config['schema'],self.config['table'])
+        return self._do_bulk_insert()
 
     def save_data(self):
         insmethod = self.config.get('insertion_method','UPSERT')
@@ -330,6 +406,8 @@ class PipelineTargetDatabase(PipelineTarget):
                 self._do_upsert()
             case 'BULK_INSERT':
                 self._do_bulk_insert()
+            case 'FULL_COPY':
+                self._do_full_copy()
         
         
 
@@ -342,7 +420,7 @@ class PipelineTargetFlatFile(PipelineTarget):
         self.logger.info('Target flat file configuration')
     
     def get_filename(self):
-        file_extension = self.config.get('extension','CSV')
+        file_extension = self.config.get('extension','csv')
         filename = 'filename'
         cnf_filename = self.config.get('filename','default')
         if '{PID}' in cnf_filename:
@@ -386,6 +464,133 @@ class PipelineTargetFlatFile(PipelineTarget):
 
     def save_data(self):
         file_extension = self.config.get('extension','CSV')
+        
+
         if str(file_extension).upper() == 'CSV':
             self._save_to_csv()
         return super().save_data()
+
+class PipelineTargetReport(PipelineTarget):
+    def __init__(self, config, *args, **kwargs) -> None:
+        super().__init__(config, *args, **kwargs)
+        #self.config = config['target']
+        self.file_extension = self.config.get('extension','csv')        
+        self.columns_names = self.config.get('columns_names',[])
+        self.columns_types = self.config.get('columns_types',[])
+        self.columns = self.config.get('columns',[])
+        self.header = self.config.get('header',True)
+        self.separator = self.config.get('separator',',')
+        self.index = self.config.get('index',False)
+        self.mode = self.config.get('mode','w')
+        self.path = self.config.get('path','/files')
+        self.filename = self.config.get('filename','default')
+        self.logger.info(f'filename: {self.filename}')
+        self.env = kwargs.get('environment',None)
+        
+
+    def configure_dynamic(self):
+        return
+
+    def get_filename(self):
+        filename = 'filename'
+        cnf_filename = self.config.get('filename','default')
+        # make valid path + filename
+        cnf_filename = os.path.join(self.path,cnf_filename)
+
+        if '{PID}' in str(cnf_filename):
+            filename = str(cnf_filename).replace('{PID}',str(self.pipeline_pid))
+        elif '{YYYYMMDD}' in str(cnf_filename):
+            filename = str(cnf_filename).replace('{YYYYMMDD}',str(self.pipeline_pid)[:8])
+        else:
+            filename = str(cnf_filename)
+        if filename.endswith(self.file_extension):
+            return filename
+        return f'{filename}.{self.file_extension}'
+    
+    def _save_to_csv(self):
+        filename = self.get_filename()
+        if isinstance(self._data,pandas.DataFrame):
+            if os.path.exists(filename):
+                # remove it
+                os.remove(filename)
+            # file does not exist, create with header
+            header = self.config.get('header', True)
+            mode = 'w'
+            self._data.to_csv(
+                filename,
+                sep=self.config.get('separator',','),
+                header=header,
+                index=self.config.get('index',False),
+                mode=mode
+            )
+        
+        self.logger.info(f'{self.get_filename()} saved')
+    
+    def _save_to_excel(self):
+        if isinstance(self._data,pandas.DataFrame):
+            if os.path.exists(self.filename):
+                # remove it
+                os.remove(self.filename)
+
+            # file does not exist, create with header
+            header = self.config.get('header',False)
+            index = self.config.get('index',False)
+            mode = 'w'
+            date_format = self.config.get('date_format','DD/MM/YYYY')
+            engine_kwargs = self.config.get('engine_kwargs',{})
+            writer_engine = self.config.get('writer_engine','xlsxwriter')
+            # Check if is xls or xlsx
+            if self.file_extension == 'xlsx':
+                with pandas.ExcelWriter(self.get_filename(),
+                        engine=writer_engine,
+                        date_format= date_format,
+                        engine_kwargs=engine_kwargs) as writer:
+                    self._data.to_excel(writer,index=index, header=header)                 
+            else:
+                self._data.to_excel(
+                    self.get_filename(),
+                    header=header,
+                    index=self.config.get('index',False),
+                    mode=mode
+            )
+        
+        self.logger.info(f'{self.get_filename()} saved')
+    
+    def get_columns_names(self):
+        return self.columns_names  
+
+    def prepare_data(self,data):
+        return data
+    
+    def save_data(self):
+        # check if path exists and create if not
+        if not os.path.exists(self.path):
+            os.makedirs(self.path)
+            
+        # make self._data a single dataframe if it is a list of dataframes
+        if isinstance(self._data,list):
+            self._data = pandas.concat(self._data)
+        # polish data
+        self._data = self.prepare_data(self._data)
+        # define columns names
+        if len(self.columns_names) > 0:
+            self._data.columns = self.get_columns_names()
+        # define columns types
+        if len(self.columns_types) > 0:
+            for col, col_type in zip(self.columns, self.columns_types):
+                self._data[col] = self._data[col].astype(col_type)
+        if str(self.file_extension).upper() == 'CSV':
+            self._save_to_csv()
+        if str(self.file_extension).upper() == 'XLSX':
+            self._save_to_excel()
+        if str(self.file_extension).upper() == 'XLS':
+            self._save_to_excel()
+        # Save TXT as CSV
+        if str(self.file_extension).upper() == 'TXT':
+            self._save_to_csv()
+        self.xcom_value = self.get_filename()
+        if self.env:
+            filename = self.get_filename()
+            self.env.save_file(filename,object_name=filename)
+        self.logger.info(f'Report file: {self.xcom_value}')
+    

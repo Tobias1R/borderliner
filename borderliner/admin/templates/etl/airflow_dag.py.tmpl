@@ -3,7 +3,7 @@ from airflow.hooks.base_hook import BaseHook
 from airflow import DAG
 from airflow.models import Variable
 import datetime
-import CRAFTABLE_TASK_WRAPPER as tw
+import task_common as tw
 from botocore.exceptions import ClientError
 import boto3
 import os

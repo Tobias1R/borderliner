@@ -24,6 +24,10 @@ class EtlPipeline(Pipeline):
     def extract(self):
         
         self.tracker.phase(f'Extracting data from {self.source}')
+        # check if target has deltas
+        if self.target:
+            if self.target.has_deltas:
+                self.source.dynamic_params = self.target.determine_deltas()
         self.source.extract()
         if self.config.generate_control_columns:
             self.logger.info('setting up control columns')
@@ -91,6 +95,7 @@ class EtlPipeline(Pipeline):
                         self.logger.info("File uploads disabled in pipeline configuration.")
                         print_upload_info = False
         else:
+            print('ANNNH?')
             self.source._data = self.transform(self.source._data,*args, **kwargs)
             # if isinstance(self.source._data,pandas.DataFrame):
             #     # collect meta info
@@ -123,5 +128,14 @@ class EtlPipeline(Pipeline):
                         storage_root=self.env.storage_paths['storage_root'],
                         object_name=self.env.storage_paths['temp_files_dir']+'/'+filename
                     )
+        try:
+            if self.env.manager:
+                # ler do config o nome da variavel
+                # ler do target valor da variavel
+                if self.target.xcom_value:
+                    self.env.manager.set_variable('XCOM_ETL',self.target.xcom_value)
+        except Exception as e:
+            self.logger.warning('XCOM_ETL variable not set')
+            self.logger.warning(e)
         #self.logger.info(self.target.metrics)
         

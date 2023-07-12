@@ -49,29 +49,104 @@ class CloudEnvironment:
         self.show_info = True
         self.pipeline_db = None
         self.data_buffers = []
+        self.build_info_file = None
+        self.build_version = '0.0.0'
+        self.manager_type = 'AIRFLOW'
+        self.manager = None
+        self.task_manager_api =''
+        self.task_manager_api_user=''
+        self.task_manager_api_password=''
+        self.default_bucket = ''
         if isinstance(source,str):
             self._load_from_file(source)
         elif isinstance(source,dict):
             self._load_dict(source)
         else:
             raise ValueError("Impossible to configure cloud environment")
+        self._load_manager(kwargs.get('manager',None))
         self._show_info()
+
+    
+    def print_environment(self):
+        # print os environment
+        logger.info('OS ENVIRONMENT:')
+        for key in os.environ:
+            logger.info(f'{key}={os.environ[key]}')
+
+        
+    
+    def _load_manager(self,manager=None):
+        if manager:
+            self.manager = manager
+            return 
+        
+        if str(self.manager_type).upper() == 'AIRFLOW':
+            from borderliner.cloud.flow_gateways.airflow_api import AirflowAPI
+            self.manager = AirflowAPI(
+                    base_url=self.task_manager_api,
+                    username=self.task_manager_api_user,
+                    password=self.task_manager_api_password
+                )
+            return
+        
+        logger.warning(f'No flow manager loaded.')
+    
         
     def _load_dict(self,source):
         for key in source:
             self.__setattr__(key,source[key])
+        data_loaded = source
+        for key in data_loaded:
+            # search for $env vars
+            if isinstance(data_loaded[key],dict):
+                for k in data_loaded[key]:                    
+                    if str(data_loaded[key][k]).startswith('$ENV_'):
+                        env_key = str(data_loaded[key][k]).replace('$ENV_','')#str(key) + '_' + str(k)
+                        data_loaded[key][k] = os.getenv(
+                                env_key,
+                                data_loaded[key][k]
+                            )   
+                    elif str(data_loaded[key][k]).startswith('$airflow'):
+                        env_key = 'AIRFLOW_VAR_'+str(key).upper() + '_' + str(k).upper()
+                        data_loaded[key][k] = os.getenv(
+                                env_key,
+                                data_loaded[key][k]
+                            ) 
+                        print('LOADED ',env_key,data_loaded[key][k]) 
+            elif isinstance(data_loaded[key],str):     
+                if str(data_loaded[key]).startswith('$ENV_'):
+                    env_key = str(data_loaded[key]).replace('$ENV_','')
+                    data_loaded[key] = os.getenv(
+                            env_key,
+                            data_loaded[key]
+                        )
+            self.__setattr__(key,data_loaded[key])
 
     def _show_info(self):
+        # get version info from file
+        if self.build_info_file:
+            with open(self.build_info_file,'r') as f:
+                # read 1 line
+                build_info = f.read()
+                #log build info
+                logger.info(f'GIT Commit Version: {build_info}')
+                self.build_version = build_info
+                
         logger.info(f'cloud enviroment {self.service} loaded.')
         if self.show_info:
             logger.info(json.dumps(self.connections,
                   sort_keys=True, indent=4))
+        self.print_environment()
 
+    # def _load_from_file(self,file):
+    #     with open(file,'r') as f:
+    #         data_loaded = yaml.safe_load(f)
+    #         for key in data_loaded:
+    #             self.__setattr__(key,data_loaded[key])
+    
     def _load_from_file(self,file):
-        with open(file,'r') as f:
-            data_loaded = yaml.safe_load(f)
-            for key in data_loaded:
-                self.__setattr__(key,data_loaded[key])
+        data_loaded = yaml.safe_load(file)
+        return self._load_dict(data_loaded)
 
     def _load_connection_interfaces(self):
         sys.path.insert(1, os.getcwd())
@@ -156,3 +231,8 @@ class CloudEnvironment:
     
     def download_flat_files(self,source_config):
         pass
+
+    def move_file(self,source,destination):
+        pass
+
+    

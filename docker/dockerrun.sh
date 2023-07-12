@@ -16,6 +16,9 @@ echo "[INFO] Downloading pipeline manifest"
 
 echo "[INFO] manifest file: $manifest"
 MANIFEST_DESTINATION="pipeline/manifest.txt"
+if [ ! -d "pipeline" ]; then
+  mkdir "pipeline"
+fi
 if [ -z "$manifest" ]; then
     echo "[ERROR] manifest file not specified."
     exit 1
@@ -101,6 +104,8 @@ while read location; do
     elif [[ $location =~ ^env\ (.*)=(.*)$ ]]; then
         export ${BASH_REMATCH[1]}="${BASH_REMATCH[2]}"
     else
+        location=$(echo "$location" | tr -d '\n')
+        location=$(echo $location | sed 's/\s*$//')
         # Get the filename from the location
         filename=$(basename "$location")
         # Download the file from the directory
@@ -112,7 +117,7 @@ done < "$file_manifest"
 if [ -f "${download_dir}requirements.txt" ]; then
    # Install the dependencies using pip
    echo "[INFO] Installing dependencies from requirements.txt..."
-   pip install -y -r "${download_dir}requirements.txt"
+   pip install -r "${download_dir}requirements.txt"
 else
    echo "[INFO] No requirements.txt file found."
 fi

@@ -10,7 +10,15 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     netcat \
     g++ git unzip libxml2 apt-transport-https ca-certificates lsb-release \
-    default-libmysqlclient-dev build-essential
+    default-libmysqlclient-dev build-essential 
+
+RUN curl https://dl.min.io/client/mc/release/linux-amd64/mc \
+  --create-dirs \
+  -o $HOME/minio-binaries/mc
+
+RUN chmod +x $HOME/minio-binaries/mc
+RUN export PATH=$PATH:$HOME/minio-binaries/
+
 # AZURE CLI
 # RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
@@ -54,8 +62,18 @@ COPY requirements.txt /requirements.txt
 RUN pip install -r /requirements.txt
 
 
+# Initial Setup Borderliner
+RUN mkdir /tmp/borderliner 
+COPY . /tmp/borderliner
+# Install any dependencies required by the setup.py script
+RUN apt-get update && apt-get install -y python3-setuptools
+RUN cd /tmp/borderliner
+# Run the setup.py script to install the package
+RUN python3 /tmp/borderliner/setup.py install
+
+
 # Run the bash script
-RUN chmod +x /usr/local/bin/setup_borderliner.sh && /usr/local/bin/setup_borderliner.sh
+RUN chmod +x /usr/local/bin/setup_borderliner.sh
 RUN chmod +x /usr/local/bin/dockerrun.sh 
 
 CMD ["dockerrun.sh"]

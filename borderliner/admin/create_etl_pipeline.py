@@ -84,7 +84,7 @@ class CommandCreateEtl(ParseTemplateCommand):
         
         self.etl_config = {
             "type": "ETL",
-            "cloud": "aws.yml",
+            "cloud": "cloud.yml",
             "pipeline_name": f"$ENV_pipeline_name",
             "dump_data_csv": False,
             "generate_control_columns": True,

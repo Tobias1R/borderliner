@@ -20,5 +20,6 @@ def transform(data:pandas.DataFrame,*args,**kwargs):
 
 if __name__ == '__main__':
     p = etl.EtlPipeline("{config_yml_file}")
-    p.transform = transform
+    # Transformation disabled by default
+    # p.transform = transform
     p.find_entry_point()
